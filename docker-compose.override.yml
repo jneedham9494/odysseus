@@ -1,0 +1,17 @@
+name: odysseus-mine
+services:
+  chromadb:
+    ports: !reset []
+  searxng:
+    ports: !reset []
+  ntfy:
+    ports: !reset []
+  # Dual-home onto the homelab network so the assistant can reach homelab
+  # services by name (homeassistant:8123, miniflux:8080, adguard, plane, …).
+  odysseus:
+    networks:
+      - default
+      - homelab
+networks:
+  homelab:
+    external: true
