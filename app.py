@@ -638,6 +638,10 @@ app.include_router(setup_cleanup_routes(session_manager))
 from routes.personal_routes import setup_personal_routes
 app.include_router(setup_personal_routes(personal_docs_mgr, rag_manager, rag_available))
 
+# Approval queue: list/approve/reject agent actions gated by agent_tool_confirm.
+from routes.pending_routes import setup_pending_routes
+app.include_router(setup_pending_routes())
+
 # Embedding model management
 from routes.embedding_routes import setup_embedding_routes
 app.include_router(setup_embedding_routes())
