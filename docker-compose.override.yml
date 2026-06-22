@@ -12,6 +12,11 @@ services:
     networks:
       - default
       - homelab
+      # Reach LiteLLM (litellm:4000) so the "LiteLLM (traced)" endpoint works and
+      # assistant LLM calls flow through Langfuse.
+      - ai_default
 networks:
   homelab:
+    external: true
+  ai_default:
     external: true
