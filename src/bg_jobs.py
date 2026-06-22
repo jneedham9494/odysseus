@@ -130,12 +130,17 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         )
         argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
 
+    # Secret-free env: background bash must not inherit app secrets either.
+    from src.sandbox_env import build_agent_subproc_env
+    _bg_env = build_agent_subproc_env(cwd or str(BG_JOBS_DIR))
+
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         cwd=cwd or None,
+        env=_bg_env,
         **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
     )
 

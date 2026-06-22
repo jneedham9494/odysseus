@@ -474,13 +474,10 @@ async def _direct_fallback(
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
 ) -> Optional[Dict]:
-    _subproc_env = {
-        **os.environ,
-        "TERM": "xterm-256color",
-        "COLUMNS": "120",
-        "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
-    }
+    # Secret-free env for agent-run bash/python: built from an allowlist, NOT
+    # os.environ, so API keys/tokens/passwords are never exposed to agent code.
+    from src.sandbox_env import build_agent_subproc_env
+    _subproc_env = build_agent_subproc_env(_AGENT_WORKDIR)
 
     try:
         ctx = {
