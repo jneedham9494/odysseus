@@ -63,6 +63,17 @@ def _needs_approval(tool_type, content=None) -> bool:
             return True  # total failure → gate everything (safest)
 
 
+def _tainted_needs_approval(session_id, tool_type, content=None) -> bool:
+    """True if a credentialed action must be approved because the session has
+    ingested untrusted web/browser content (EchoLeak / tier-split defense).
+    Forces approval even when auto-confirm is off."""
+    try:
+        from src.context_taint import requires_taint_approval
+        return requires_taint_approval(session_id, tool_type, content)
+    except Exception:
+        return False
+
+
 def _load_mcp_disabled_map() -> Dict[str, set]:
     """Load per-server disabled tool sets from the database."""
     from core.database import McpServer, SessionLocal
@@ -2839,9 +2850,12 @@ async def stream_agent_loop(
                     "blocked": True,
                 }
                 logger.info("Tool blocked before start by policy: %s", block.tool_type)
-            elif _needs_approval(block.tool_type, block.content):
+            elif (_needs_approval(block.tool_type, block.content)
+                  or _tainted_needs_approval(session_id, block.tool_type, block.content)):
                 # Approval gate: stash mutating / real-world actions for the
                 # user's one-tap approval instead of executing them inline.
+                # Also triggers when the session is tainted by untrusted web
+                # content and this is a credentialed action (EchoLeak defense).
                 _pid = None
                 try:
                     from src.pending_actions import stash as _stash_pending
@@ -3160,6 +3174,17 @@ async def stream_agent_loop(
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
+
+            # Taint the session if this tool pulled in untrusted external
+            # content (web/browser) — later credentialed actions then need
+            # approval (EchoLeak / tier-split defense).
+            if not result.get("error") and not result.get("blocked"):
+                try:
+                    from src.context_taint import is_untrusted_source, mark_tainted
+                    if is_untrusted_source(block.tool_type):
+                        mark_tainted(session_id)
+                except Exception:
+                    pass
 
             formatted = format_tool_result(desc, result)
             tool_results.append(formatted)
