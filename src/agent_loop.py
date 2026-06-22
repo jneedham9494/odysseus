@@ -41,12 +41,26 @@ logger = logging.getLogger(__name__)
 
 def _needs_approval(tool_type, content=None) -> bool:
     """True if this tool must be queued for human approval (agent_tool_confirm).
-    Lazy-imported so a problem in the approval module can never break the loop."""
+    Lazy-imported so a problem in the approval module can never break the loop.
+
+    Fails CLOSED: if the full policy check raises, gate mutating tools rather
+    than letting them run unchecked — unless confirmation is clearly disabled."""
     try:
         from src.pending_actions import requires_approval
         return bool(requires_approval(tool_type, content))
     except Exception:
-        return False
+        logger.warning("approval policy check failed for %r; failing closed", tool_type)
+        try:
+            from src.pending_actions import confirm_enabled
+            if not confirm_enabled():
+                return False  # user has gating off → don't stall their actions
+        except Exception:
+            pass  # can't even read the setting → assume gating may be on
+        try:
+            from src.pending_actions import is_mutating_tool
+            return is_mutating_tool(tool_type, content)
+        except Exception:
+            return True  # total failure → gate everything (safest)
 
 
 def _load_mcp_disabled_map() -> Dict[str, set]:

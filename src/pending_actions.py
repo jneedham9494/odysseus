@@ -130,6 +130,32 @@ def requires_approval(tool_type: Optional[str], content: Optional[str] = None) -
     return any(tool_type.startswith(p) for p in GATED_MCP_PREFIXES)
 
 
+# High-risk real-world mutators that have their own confirm path in normal
+# operation (e.g. send_email via agent_email_confirm) but MUST also be caught by
+# the fail-closed net if the normal policy can't be evaluated. Listed here, not
+# in DEFAULT_GATED_TOOLS, so normal-operation behaviour is unchanged.
+_FAILCLOSED_EXTRA_MUTATORS = {
+    "send_email", "reply_to_email", "bulk_email", "delete_file", "move_file",
+}
+
+
+def is_mutating_tool(tool_type: Optional[str], content: Optional[str] = None) -> bool:
+    """Static (no settings/DB) classification of whether a tool mutates.
+
+    Used by the fail-closed approval path: when the full ``requires_approval``
+    policy can't be evaluated (e.g. a settings/DB read raised), this decides
+    whether to gate. It reads only module constants so it cannot itself fail.
+    Unknown tool types are treated as mutating (safe default).
+    """
+    if not tool_type:
+        return True
+    if tool_type in _METHOD_AWARE_TOOLS:
+        return _is_write_api_call(content)
+    if tool_type in DEFAULT_GATED_TOOLS or tool_type in _FAILCLOSED_EXTRA_MUTATORS:
+        return True
+    return any(tool_type.startswith(p) for p in GATED_MCP_PREFIXES)
+
+
 def _summarize(tool_type: str, content: str) -> str:
     body = (content or "").strip()
     first = body.splitlines()[0] if body else ""

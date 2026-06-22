@@ -183,6 +183,12 @@ class VectorRAG:
         if not metadata or not isinstance(metadata, dict):
             return False
 
+        # Redact high-risk secrets/identifiers before they are embedded or stored
+        # (opt out per-doc with metadata {"redact": False}).
+        if metadata.get("redact", True):
+            from src.rag_redaction import redact_for_index
+            text, _ = redact_for_index(text)
+
         doc_id = _generate_doc_id(text, metadata.get("owner") or "")
         wrote = False
         for lane in self._lanes:
@@ -214,6 +220,13 @@ class VectorRAG:
         ]
         if not valid:
             return {"success": False, "message": "No valid documents"}
+
+        # Redact high-risk secrets/identifiers before embedding/storing.
+        from src.rag_redaction import redact_for_index
+        valid = [
+            ((redact_for_index(t)[0] if m.get("redact", True) else t), m)
+            for t, m in valid
+        ]
 
         added_ids = set()
         attempted_new = False
