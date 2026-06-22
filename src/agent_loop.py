@@ -39,12 +39,12 @@ from src.agent_tools import (
 logger = logging.getLogger(__name__)
 
 
-def _needs_approval(tool_type) -> bool:
+def _needs_approval(tool_type, content=None) -> bool:
     """True if this tool must be queued for human approval (agent_tool_confirm).
     Lazy-imported so a problem in the approval module can never break the loop."""
     try:
         from src.pending_actions import requires_approval
-        return bool(requires_approval(tool_type))
+        return bool(requires_approval(tool_type, content))
     except Exception:
         return False
 
@@ -2825,7 +2825,7 @@ async def stream_agent_loop(
                     "blocked": True,
                 }
                 logger.info("Tool blocked before start by policy: %s", block.tool_type)
-            elif _needs_approval(block.tool_type):
+            elif _needs_approval(block.tool_type, block.content):
                 # Approval gate: stash mutating / real-world actions for the
                 # user's one-tap approval instead of executing them inline.
                 _pid = None

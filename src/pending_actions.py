@@ -31,15 +31,30 @@ PENDING_DB = os.path.join(DATA_DIR, "pending_actions.db")
 # (send_email/reply_to_email/bulk_email already have their own confirm via the
 # agent_email_confirm setting, so they're intentionally omitted here.)
 DEFAULT_GATED_TOOLS = {
-    "api_call", "app_api",            # HA service calls, AdGuard/Firefly/Plane writes
     "manage_calendar", "manage_contact",
     "ui_control",
     "write_file", "edit_file", "bash", "python",
     "generate_image", "edit_image",
 }
+# api_call / app_api are gated ONLY for write methods — read-only GET/HEAD calls
+# (e.g. "is anyone home?", "what's my UPS load?") run freely so the gate isn't noisy.
+_METHOD_AWARE_TOOLS = {"api_call", "app_api"}
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # MCP tool-name prefixes to gate (browser-automation tools register as e.g.
 # "browser_navigate", "browser_click").
 GATED_MCP_PREFIXES = ("browser_", "playwright_")
+
+
+def _is_write_api_call(content: Optional[str]) -> bool:
+    """For api_call/app_api, inspect the JSON args' HTTP method. Unparseable ->
+    treat as write (fail closed)."""
+    if not content:
+        return True
+    try:
+        method = str(json.loads(content).get("method") or "GET").upper()
+        return method in _WRITE_METHODS
+    except Exception:
+        return True
 
 
 def _now() -> str:
@@ -101,10 +116,15 @@ def _gated_tools() -> set:
     return DEFAULT_GATED_TOOLS | extra
 
 
-def requires_approval(tool_type: Optional[str]) -> bool:
-    """True if this tool must be queued for human approval before running."""
+def requires_approval(tool_type: Optional[str], content: Optional[str] = None) -> bool:
+    """True if this tool must be queued for human approval before running.
+
+    Reads run freely; only mutating actions are gated. For api_call/app_api the
+    HTTP method decides (GET/HEAD pass, POST/PUT/PATCH/DELETE gate)."""
     if not tool_type or not confirm_enabled():
         return False
+    if tool_type in _METHOD_AWARE_TOOLS:
+        return _is_write_api_call(content)
     if tool_type in _gated_tools():
         return True
     return any(tool_type.startswith(p) for p in GATED_MCP_PREFIXES)
