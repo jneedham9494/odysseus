@@ -26,7 +26,23 @@ jobs:
         with:
           python-version: "3.11"
       # Byte-compile sources — catches syntax errors without installing deps.
-      - run: python -m compileall -q app.py core routes src services scripts tests
+      - run: python -m compileall -q app.py core routes src services scripts tests eval
+
+  eval-validate:
+    name: Eval golden set (structural)
+    runs-on: ubuntu-latest
+    # The real eval gate (eval/run.sh) needs the tailnet-only LiteLLM models and
+    # runs ON ODIN before promoting a model/prompt change. CI can't reach those,
+    # so here we only validate the golden set is structurally sound — a broken
+    # set or unknown check type fails fast, before it reaches the gate on odin.
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+      - run: python eval/validate_golden_set.py
 
   node-syntax:
     name: JS syntax (node --check)
