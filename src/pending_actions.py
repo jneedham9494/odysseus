@@ -178,7 +178,7 @@ def stash(
         )
     logger.info("Queued tool '%s' for approval (id=%s, owner=%s)", tool_type, pid, owner)
     try:
-        _notify(pid, summary)
+        _notify(pid, summary, tool_type)
     except Exception as e:  # notification is best-effort
         logger.warning("pending-action notify failed: %s", e)
     return pid
@@ -214,29 +214,41 @@ def mark(pid: str, status: str, result: Optional[str] = None) -> None:
         )
 
 
-def _notify(pid: str, summary: str) -> None:
+def _notify(pid: str, summary: str, tool_type: str = "") -> None:
     """Best-effort ntfy notification. No-op unless the ``agent_tool_confirm_ntfy``
-    setting holds a full ntfy topic URL. Adds a one-tap "view" action linking to
-    the app when ``app_base_url`` is set."""
+    setting holds a full ntfy topic URL.
+
+    When ``app_base_url`` is set, the push carries categorized one-tap
+    **Approve** / **Reject** http-action buttons (``src/ntfy_actions.py``) wired
+    to the approval-queue routes, so the action can be decided from the phone.
+    Without a base URL there is nowhere to point the buttons, so it degrades to
+    a plain high-priority alert."""
     url = get_setting("agent_tool_confirm_ntfy", None)
     if not url:
         return
     import urllib.request
 
-    headers = {"Title": "Assistant action needs approval", "Priority": "high", "Tags": "warning"}
+    from src import ntfy_actions
+
     base = (get_setting("app_base_url", "") or "").rstrip("/")
-    actions = []
     if base:
-        actions.append(f"view, Open queue, {base}/?pending={pid}")
-    # One-tap kill-switch: a headless ntfy http action that HALTS all autonomous
-    # action. Only added when a kill-token is configured (see autonomy_routes).
+        headers = ntfy_actions.build_approval_headers(pid, tool_type, base)
+    else:
+        headers = {
+            "Title": "Assistant action needs approval",
+            "Priority": "high",
+            "Tags": "warning",
+        }
+    # One-tap kill-switch (preserved from the kill-switch rung): a headless ntfy
+    # http action that HALTS all autonomous action, appended to the approve/reject
+    # buttons. Only added when a kill-token is configured (see autonomy_routes).
     kill_token = get_setting("autonomy_kill_token", "") or ""
     if base and kill_token:
-        actions.append(
+        halt = (
             f"http, HALT autonomy, {base}/api/autonomy/halt, method=POST, "
             f"headers.X-Autonomy-Token={kill_token}, clear=true"
         )
-    if actions:
-        headers["Actions"] = "; ".join(actions)
+        existing = headers.get("Actions", "")
+        headers["Actions"] = f"{existing}; {halt}" if existing else halt
     req = urllib.request.Request(url, data=summary.encode("utf-8"), headers=headers, method="POST")
     urllib.request.urlopen(req, timeout=5)
