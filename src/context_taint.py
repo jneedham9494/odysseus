@@ -104,6 +104,53 @@ def is_untrusted_source_type(source_type: Optional[str]) -> bool:
     return bool(source_type) and source_type.startswith(_UNTRUSTED_SOURCE_TYPE_PREFIX)
 
 
+def row_is_untrusted(metadata: Optional[dict]) -> bool:
+    """True if a retrieved RAG row's provenance is attacker-controllable.
+
+    A row is untrusted if the write-path stamped ``taint=untrusted`` on it, or
+    (belt-and-suspenders, in case a row predates the taint stamp) its
+    ``source_type`` is a connector source. Non-dict / missing metadata is
+    treated as trusted — only an explicit untrusted marker taints.
+    """
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("taint") == TAINT_UNTRUSTED:
+        return True
+    return is_untrusted_source_type(metadata.get("source_type"))
+
+
+def taint_from_retrieved_rows(session_id: Optional[str], rows: object) -> bool:
+    """Taint ``session_id`` if any retrieved RAG row is untrusted.
+
+    This is the retrieval-side enforcement seam (MR-2b): connector content is
+    taint-stamped at write time, but only becomes active when *read* into a
+    session's context. For each untrusted row, escalate the session to that
+    row's stamped sensitivity (mark_tainted is escalate-only). After this,
+    ``requires_taint_approval`` forces later credentialed mutators through human
+    approval (EchoLeak / tier-split defense).
+
+    Degrades safely: a falsy ``session_id`` (e.g. background ingestion / a
+    sessionless retrieval) is a no-op returning False, so poisoned content
+    ingested outside a conversation can never silently taint a live session.
+
+    Args:
+        session_id: The session consuming these rows, or None if sessionless.
+        rows: An iterable of search-result dicts, each with a ``metadata`` dict.
+
+    Returns:
+        True if the session was tainted by at least one untrusted row.
+    """
+    if not session_id or not rows:
+        return False
+    tainted = False
+    for row in rows:
+        metadata = row.get("metadata") if isinstance(row, dict) else None
+        if row_is_untrusted(metadata):
+            mark_tainted(session_id, sensitivity=normalize_sensitivity(metadata.get("sensitivity")))
+            tainted = True
+    return tainted
+
+
 def is_credentialed_mutator(tool_type: Optional[str], content: Optional[str] = None) -> bool:
     if not tool_type:
         return False
