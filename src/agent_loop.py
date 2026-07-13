@@ -36,6 +36,7 @@ from src.agent_tools import (
     ToolBlock,
     MAX_AGENT_ROUNDS,
 )
+from src.tool_capping import MAX_TOOLS_PER_REQUEST
 
 logger = logging.getLogger(__name__)
 
@@ -2071,6 +2072,25 @@ async def stream_agent_loop(
                         )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
+    # Cap the surfaced tool set to a bounded, relevance-ranked size (MR-14).
+    # A large schema list degrades tool selection and inflates every request;
+    # keep the always-available tools plus the most relevant RAG-ranked ones.
+    # This is pre-prompt SELECTION (which schemas the model sees), not admission.
+    if not guide_only and _relevant_tools is not None and len(_relevant_tools) > MAX_TOOLS_PER_REQUEST:
+        from src.tool_capping import cap_tools_for_request
+        from src.tool_index import ALWAYS_AVAILABLE as _AA, get_tool_index as _gti
+        try:
+            _idx = _gti()
+        except Exception:
+            _idx = None
+        _before = len(_relevant_tools)
+        _relevant_tools = cap_tools_for_request(
+            _retrieval_query or "", _relevant_tools,
+            always_include=_AA, tool_index=_idx,
+        )
+        logger.info("[tool-rag] capped tools %d -> %d (limit %d)",
+                    _before, len(_relevant_tools), MAX_TOOLS_PER_REQUEST)
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])

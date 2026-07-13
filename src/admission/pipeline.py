@@ -18,6 +18,7 @@ from src.admission.stages import (
     PolicyBlockStage,
     TaintApprovalStage,
 )
+from src.admission.toolcall_validation import ToolCallValidationStage
 from src.admission.types import AdmissionContext, Decision, Gate, Verdict, allow, gate
 
 logger = logging.getLogger(__name__)
@@ -71,12 +72,18 @@ class AdmissionPipeline:
 
 
 def build_default_pipeline() -> AdmissionPipeline:
-    """The default pipeline: hard block → taint → auto-confirm approval.
+    """The default pipeline: validate → hard block → taint → auto-confirm approval.
 
-    This exactly reproduces the original inline gate in ``stream_agent_loop``.
+    Ordering rationale (hard structural blocks + HITL + taint before softer
+    checks): the toolcall-validation stage runs FIRST so a malformed or unknown
+    call is DENIED before any policy/taint/approval stage even considers it — a
+    call that cannot be dispatched should never be gated for a human either. The
+    remaining three stages reproduce the original inline gate in
+    ``stream_agent_loop`` (policy-block DENY → taint GATE → confirm-approval GATE).
     """
     return AdmissionPipeline(
         [
+            ToolCallValidationStage(),
             PolicyBlockStage(),
             TaintApprovalStage(),
             ConfirmApprovalStage(),
