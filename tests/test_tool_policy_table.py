@@ -59,7 +59,7 @@ GOLDEN_PLAN_MODE_MUTATORS = {
     "manage_bg_jobs",
 }
 
-GOLDEN_UNTRUSTED_SOURCE = {"web_fetch", "web_search"}
+GOLDEN_UNTRUSTED_SOURCE = {"web_fetch", "web_search", "mcp__searxng__web_search"}
 GOLDEN_UNTRUSTED_PREFIXES = ("browser_", "playwright_")
 GOLDEN_CREDENTIALED_MUTATORS = {"send_email", "reply_to_email", "bulk_email"}
 

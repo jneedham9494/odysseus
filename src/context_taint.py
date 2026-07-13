@@ -24,6 +24,9 @@ _TAINTED_SESSIONS: set[str] = set()
 # All tier/mutator classification below is DERIVED from the single source of
 # truth in src.tool_policy_table (see that module's ``_TABLE`` / ``_PATTERN_TABLE``).
 # Tools whose output is attacker-controllable external content.
+# Derived from the single source of truth in tool_policy_table. The searxng MCP
+# tool (`mcp__searxng__web_search`) is registered there as an untrusted source so
+# its web results taint the session too.
 _UNTRUSTED_SOURCE_TOOLS = tool_policy_table.UNTRUSTED_SOURCE_TOOLS
 _UNTRUSTED_PREFIXES = tool_policy_table.UNTRUSTED_PREFIXES
 
