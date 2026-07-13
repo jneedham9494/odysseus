@@ -1340,8 +1340,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
 # ---------------------------------------------------------------------------
 
 async def do_api_call(content: str) -> Dict:
-    """Execute an API call to a registered integration."""
-    from src.integrations import execute_api_call, load_integrations
+    """Execute an API call to a registered integration.
+
+    Routes through the deterministic credential broker (src/credential_broker.py)
+    so the model never touches a secret and off-policy destinations are refused
+    before any credential is attached.
+    """
+    from src.credential_broker import BrokerRequest, broker_api_call
+    from src.integrations import load_integrations
     try:
         args = json.loads(content)
     except json.JSONDecodeError:
@@ -1359,6 +1365,8 @@ async def do_api_call(content: str) -> Dict:
                 pass
 
     integration_name = args.get("integration", "")
+    # Keep the friendly "unknown integration" message the agent relies on; the
+    # broker also refuses unknown targets, but this lists what IS available.
     integrations = load_integrations()
     intg = next((i for i in integrations if i["id"] == integration_name
                  or i["name"].lower() == integration_name.lower()), None)
@@ -1366,14 +1374,15 @@ async def do_api_call(content: str) -> Dict:
         available = ", ".join(i["name"] for i in integrations if i.get("enabled", True))
         return {"error": f"No integration matching '{integration_name}'. Available: {available or 'none configured'}", "exit_code": 1}
 
-    return await execute_api_call(
-        intg["id"],
-        args.get("method", "GET"),
-        args.get("path", "/"),
+    request = BrokerRequest(
+        target=intg["id"],
+        method=args.get("method", "GET"),
+        path=args.get("path", "/"),
         params=args.get("params"),
         body=args.get("body"),
-        extra_headers=args.get("headers"),
+        headers=args.get("headers") or {},
     )
+    return await broker_api_call(request)
 
 
 # ---------------------------------------------------------------------------
