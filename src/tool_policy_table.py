@@ -151,6 +151,12 @@ _TABLE: Dict[str, ToolPolicy] = {
     "manage_research": _p(ToolTier.EXTERNAL, "plan_mode_mutator"),
     # HTTP-method-aware: gated only for write methods (POST/PUT/PATCH/DELETE)
     "api_call": _p(ToolTier.EXTERNAL, "non_admin_blocked", "plan_mode_mutator", "method_aware"),
+    # Source summarizers pull remote-feed / document content (attacker-controllable
+    # via feed operator or document author) into model context — taint sources like
+    # web_fetch. They also hit admin-scoped integration credentials (Miniflux/
+    # Paperless), so a non-admin blocked from api_call must not reach them either.
+    "summarize_miniflux_unread": _p(ToolTier.READ, "untrusted_source", "non_admin_blocked"),
+    "summarize_paperless_recent": _p(ToolTier.READ, "untrusted_source", "non_admin_blocked"),
     "app_api": _p(ToolTier.EXTERNAL, "non_admin_blocked", "plan_mode_mutator", "method_aware"),
 
     # -- server / infra / config control (ADMIN tier) --
