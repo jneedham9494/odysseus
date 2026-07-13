@@ -260,6 +260,32 @@ async def test_voice_agent_stream_uses_stream_agent_loop_not_direct_exec():
     )
 
 
+def test_voice_policy_applies_operator_global_disabled_tools(monkeypatch):
+    """Regression: the operator's GLOBAL ``disabled_tools`` kill-list must reach
+    the voice turn's tool policy.
+
+    The admission ``PolicyBlockStage`` only DENIES when a ``tool_policy`` is
+    present, so a voice turn that omits it silently bypasses the kill-list — a
+    tool hard-DENYed on the web path would execute via voice. This test drives
+    the exact helper the voice route feeds into ``stream_agent_loop`` and proves
+    a globally-disabled tool is blocked. It fails on the pre-fix branch (where
+    the voice route passed no ``tool_policy``/``disabled_tools`` at all)."""
+    import routes.voice_routes as vr
+    import src.settings as settings
+
+    # The helper does a call-time ``from src.settings import get_setting``, so
+    # patch the source attribute that import resolves.
+    monkeypatch.setattr(
+        settings, "get_setting",
+        lambda key, default=None: ["bash"] if key == "disabled_tools" else default,
+    )
+
+    policy = vr._effective_tool_policy("what's the weather")
+
+    assert policy.blocks("bash")
+    assert "bash" in policy.all_disabled_names()
+
+
 # -- Route surface: owner-only + disabled-by-default -------------------------
 
 
