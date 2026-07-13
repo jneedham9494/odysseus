@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from src.constants import CHROMA_DIR
+from src.rag_types import RetrievedChunk
 
 # Try to import from different possible locations
 try:
@@ -50,8 +51,22 @@ class RAGManager:
         )
     
     def retrieve(self, query: str, k: int = 5) -> List[str]:
-        """Retrieve relevant chunks - delegates to VectorRAG."""
+        """Retrieve relevant chunks (bare strings) - delegates to VectorRAG.
+
+        DROPS provenance metadata. Use :meth:`retrieve_records` for any path
+        feeding retrieved content into model context (see ``src/rag_types.py``).
+        """
         return self.vector_rag.retrieve(query, k)
+
+    def retrieve_records(
+        self, query: str, k: int = 5, owner: Optional[str] = None
+    ) -> List[RetrievedChunk]:
+        """Retrieve chunks WITH provenance metadata - delegates to VectorRAG.
+
+        Metadata-carrying counterpart to :meth:`retrieve`: taint/source_type/
+        sensitivity survive the retrieval path (the taint seam).
+        """
+        return self.vector_rag.retrieve_records(query, k, owner=owner)
     
     def rebuild_index(self) -> bool:
         """Rebuild index - delegates to VectorRAG."""
