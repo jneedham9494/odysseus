@@ -25,6 +25,7 @@ from src.admission.stages import (
     requires_confirm_approval_failclosed,
     requires_taint_approval_safe,
 )
+from src.admission.toolcall_validation import ToolCallValidationStage
 from src.admission.types import (
     AdmissionContext,
     Decision,
@@ -42,6 +43,7 @@ __all__ = [
     "PolicyBlockStage",
     "TaintApprovalStage",
     "ConfirmApprovalStage",
+    "ToolCallValidationStage",
     "requires_confirm_approval_failclosed",
     "requires_taint_approval_safe",
     "AdmissionContext",

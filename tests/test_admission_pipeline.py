@@ -221,5 +221,11 @@ def test_register_stage_at_position_respects_order():
 
 def test_default_pipeline_stage_order():
     names = build_default_pipeline().stage_names
-    # Hard block first, taint (HITL) before the softer auto-confirm check.
-    assert names == ["tool_policy_block", "context_taint", "pending_actions"]
+    # Validation first (a malformed/unknown call is denied before any other stage
+    # sees it), then hard block, taint (HITL) before the softer auto-confirm check.
+    assert names == [
+        "toolcall_validation",
+        "tool_policy_block",
+        "context_taint",
+        "pending_actions",
+    ]
