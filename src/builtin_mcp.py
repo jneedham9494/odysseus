@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 from core.platform_compat import IS_WINDOWS, which_tool
+from src.mcp_allowlist import check_registration, is_allowlisted
 from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,14 @@ async def register_builtin_servers(mcp_manager):
             logger.warning(f"Built-in MCP server {name} error: {type(e).__name__}: {e}")
 
     for server_id, (script, name) in _BUILTIN_SERVERS.items():
+        # Registry hygiene (MR-13): never auto-wire a built-in that is not on the
+        # curated allowlist, or one that has been archived. This is a defence in
+        # depth in front of the same check inside McpManager.connect_server, so
+        # an archived/untrusted id is refused before we even spawn a subprocess.
+        if not is_allowlisted(server_id):
+            _, reason = check_registration(server_id, admin_approved=False)
+            logger.warning(f"Refusing to auto-wire built-in MCP server {name} ({server_id}): {reason}")
+            continue
         script_path = os.path.join(base_dir, script)
         if not os.path.exists(script_path):
             logger.warning(f"Built-in MCP server script not found: {script_path}")
@@ -133,6 +142,12 @@ async def register_builtin_servers(mcp_manager):
     async def _start_npx_servers():
         await asyncio.sleep(3)  # let Python servers finish first
         for server_id, cfg in _BUILTIN_NPX_SERVERS.items():
+            # Registry hygiene (MR-13): only auto-wire allowlisted, non-archived
+            # NPX built-ins (see the Python-server loop above for rationale).
+            if not is_allowlisted(server_id):
+                _, reason = check_registration(server_id, admin_approved=False)
+                logger.warning(f"Refusing to auto-wire NPX MCP server {cfg['name']} ({server_id}): {reason}")
+                continue
             # Skip the server if its npx package isn't cached. Without this
             # check, npx would try to download/install the package on first
             # use, which can take minutes (or hang) on fresh installs without

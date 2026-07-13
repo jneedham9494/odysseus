@@ -36,6 +36,10 @@ def test_http_transport_routes_to_start_http_connect():
         return "ROUTED"
 
     with patch.object(McpManager, "_start_http_connect", side_effect=fake_start) as m:
-        result = asyncio.run(mgr.connect_server("id1", "n", "http", url="https://x/mcp"))
+        # admin_approved=True: this exercises transport routing, not the MR-13
+        # curated-allowlist gate (an arbitrary id is refused without it).
+        result = asyncio.run(
+            mgr.connect_server("id1", "n", "http", url="https://x/mcp", admin_approved=True)
+        )
     assert result == "ROUTED"
     m.assert_called_once()
