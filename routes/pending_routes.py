@@ -7,8 +7,15 @@ Pairs with ``src/pending_actions.py`` and the approval gate in
 The core approve/reject logic lives in the module-level ``approve_pending`` /
 ``reject_pending`` coroutines so alternative front-ends (e.g. the Telegram bot
 in ``src/telegram_bot.py``) can drive the SAME approval path instead of opening
-a side door around the boundary. The HTTP handlers are thin wrappers that map
-the structured result to HTTP status codes.
+a side door around the boundary. The HTTP handlers are thin wrappers that
+authorize the caller and map the structured result to HTTP status codes.
+
+Two ways to authorize a decision:
+  1. A signed-in operator via the normal session (``require_user``).
+  2. A one-tap ntfy http-action button, which carries a per-``(id, action)``
+     HMAC ``token`` minted in ``src/ntfy_actions.py``. The token authorizes
+     exactly that action on that id and nothing else, so the phone can decide
+     without a session cookie.
 """
 from __future__ import annotations
 
@@ -16,9 +23,10 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from src.auth_helpers import require_user
+from src import ntfy_actions
 from src import pending_actions as pa
 from src.tool_execution import execute_tool_block
 
@@ -65,15 +73,33 @@ async def reject_pending(pid: str, owner: Optional[str]) -> Dict[str, Any]:
     return {"ok": True, "id": pid, "status": "rejected"}
 
 
+def _authorize(request: Request, pid: str, action: str, token: Optional[str]) -> str:
+    """Return the owner to act as, or raise 403/401.
+
+    A valid scoped ``token`` (from an ntfy button) authorizes the decision as
+    the pending action's own owner. A present-but-invalid token is rejected
+    outright -- we do not silently fall back to session auth, so a forged token
+    can't probe the session path. Absent a token, the normal session gate
+    (``require_user``) applies."""
+    if token is not None:
+        if not ntfy_actions.verify_action_token(pid, action, token):
+            raise HTTPException(403, "invalid or expired action token")
+        rec = pa.get(pid)
+        return (rec.get("owner") if rec else "") or ""
+    return require_user(request)
+
+
 def setup_pending_routes() -> APIRouter:
     router = APIRouter(prefix="/api/pending-actions", tags=["pending-actions"])
 
     @router.get("")
-    async def list_actions(owner: str = Depends(require_user)):
+    async def list_actions(request: Request):
+        owner = require_user(request)
         return {"pending": pa.list_pending(owner), "confirm_enabled": pa.confirm_enabled()}
 
     @router.post("/{pid}/approve")
-    async def approve(pid: str, owner: str = Depends(require_user)):
+    async def approve(pid: str, request: Request, token: Optional[str] = None):
+        owner = _authorize(request, pid, "approve", token)
         res = await approve_pending(pid, owner)
         if res.get("error") == "not_found":
             raise HTTPException(404, "pending action not found")
@@ -82,7 +108,8 @@ def setup_pending_routes() -> APIRouter:
         return res
 
     @router.post("/{pid}/reject")
-    async def reject(pid: str, owner: str = Depends(require_user)):
+    async def reject(pid: str, request: Request, token: Optional[str] = None):
+        owner = _authorize(request, pid, "reject", token)
         res = await reject_pending(pid, owner)
         if res.get("error") == "not_found":
             raise HTTPException(404, "pending action not found")
