@@ -41,7 +41,7 @@ EXPECTED_ORDER: list[str] = [
     "assistant", "calendar", "shell", "cookbook", "workspace", "hwfit",
     "compare", "prefs", "backup", "font", "mcp", "webhook", "api_token",
     "note", "email", "codex", "claude", "vault", "contacts",
-    "companion", "connector_ingest", "pwa", "capture",
+    "companion", "connector_ingest", "pwa", "capture", "voice",
 ]
 
 
