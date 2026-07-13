@@ -254,6 +254,17 @@ ROUTER_SPECS: list[RouterSpec] = [
     # declaration order here is not load-bearing.
     RouterSpec("pwa", _build_pwa),
     RouterSpec("capture", _simple("routes.capture_routes", "setup_capture_routes")),
+    # Voice loop (MR-21): owner-only audio-in -> STT -> agent -> TTS -> audio-out.
+    # Ships disabled (voice_loop_enabled=False); every voice-triggered action
+    # flows through stream_agent_loop's approval + taint gates, same as web chat.
+    RouterSpec(
+        "voice",
+        _simple(
+            "routes.voice_routes",
+            "setup_voice_routes",
+            lambda c: (c.stt_service, c.tts_service, c.session_manager),
+        ),
+    ),
 ]
 
 
