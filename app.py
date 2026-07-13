@@ -797,6 +797,16 @@ async def _startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    # Owner-only Telegram bridge (aiogram long-poll). DISABLED unless a token +
+    # allowed-user id are configured — start_telegram_bot() returns None when
+    # off, so this is a no-op by default and needs no inbound ingress.
+    try:
+        from src.telegram_runtime import start_telegram_bot
+        _tg_task = start_telegram_bot()
+        if _tg_task is not None:
+            _startup_tasks.append(_tg_task)
+    except Exception as _e:
+        logger.warning("Failed to start Telegram bot: %s", _e)
     # MCP servers can be slow or blocked by local tooling. Connect them after
     # the web server is accepting traffic instead of delaying the whole UI.
     async def _startup_mcp_connections():
