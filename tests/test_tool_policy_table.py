@@ -148,8 +148,10 @@ def test_is_mutating_tool_static_classification():
         assert pa.is_mutating_tool(name) is True, name
     for name in ("read_file", "grep", "web_search"):
         assert pa.is_mutating_tool(name) is False, name
-    # Unknown non-prefixed tool: unchanged fail-OPEN behaviour of is_mutating_tool.
-    assert pa.is_mutating_tool("totally_unknown_tool") is False
+    # Unknown non-prefixed tool: MR-16 actuator tiering classifies via
+    # actuator_tier, which fails CLOSED (unknown -> write-gated -> mutating). This
+    # supersedes the pre-MR-16 fail-OPEN behaviour and is strictly safer.
+    assert pa.is_mutating_tool("totally_unknown_tool") is True
     # Empty tool type -> mutating (unchanged).
     assert pa.is_mutating_tool(None) is True
 

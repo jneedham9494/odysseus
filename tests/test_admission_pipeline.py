@@ -97,8 +97,12 @@ def test_tainted_credentialed_mutator_gates_and_matches_old(monkeypatch):
         new = _pipeline_decision(pipeline, None, "tainted-sess", "send_email", "hi")
         assert old == "gate"
         assert new == old
-        # Sanity: same tool in a CLEAN session with confirm off is allowed.
-        assert _pipeline_decision(pipeline, None, "clean", "send_email", "hi") == "allow"
+        # Sanity: in a CLEAN session send_email still gates — under MR-16 it is
+        # hitl-forever (people) and gates regardless of taint or confirm. The
+        # pipeline stays equal to the (live) inline logic here too. (Pre-MR-16 this
+        # was "allow": send_email was not in DEFAULT_GATED_TOOLS.)
+        assert _old_inline_decision(None, "clean", "send_email", "hi") == "gate"
+        assert _pipeline_decision(pipeline, None, "clean", "send_email", "hi") == "gate"
     finally:
         context_taint.clear("tainted-sess")
 
