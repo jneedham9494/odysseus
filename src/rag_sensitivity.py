@@ -133,8 +133,13 @@ _HEALTH_TERMS: tuple[str, ...] = (
     "disability", "medicare", "medicaid", "medical record",
 )
 _HEALTH_RE = re.compile(r"(?i)\b(?:" + "|".join(_HEALTH_TERMS) + r")\b")
-# ICD-10 diagnosis codes (e.g. E11.9, C50.912): letter + 2 digits + optional subcode
-_ICD10_RE = re.compile(r"\b[A-TV-Z]\d{2}(?:\.[A-Z0-9]{1,4})?\b")
+# ICD-10 diagnosis codes (e.g. E11.9, C50.912): letter + 2 digits + a decimal
+# subcode. The decimal is REQUIRED: the bare 3-char category form (letter + 2
+# digits) is indistinguishable from ordinary alphanumeric tokens (part numbers,
+# order codes, "B12", "A15") and caused heavy false positives. Requiring the
+# ".subcode" keeps real diagnosis codes while cutting that noise now that this
+# runs on the live write-path.
+_ICD10_RE = re.compile(r"\b[A-TV-Z]\d{2}\.[A-Z0-9]{1,4}\b")
 
 
 def _has_card(text: str) -> bool:

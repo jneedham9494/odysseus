@@ -183,11 +183,13 @@ class VectorRAG:
         if not metadata or not isinstance(metadata, dict):
             return False
 
-        # Redact high-risk secrets/identifiers before they are embedded or stored
+        # Redact high-risk secrets/identifiers before they are embedded or stored,
+        # then persist the fail-closed graded sensitivity label as metadata
         # (opt out per-doc with metadata {"redact": False}).
         if metadata.get("redact", True):
-            from src.rag_redaction import redact_for_index
-            text, _ = redact_for_index(text)
+            from src.rag_sensitivity import classify_and_redact
+            text, label = classify_and_redact(text, metadata.get("sensitivity"))
+            metadata = {**metadata, "sensitivity": label}
 
         doc_id = _generate_doc_id(text, metadata.get("owner") or "")
         wrote = False
@@ -221,12 +223,17 @@ class VectorRAG:
         if not valid:
             return {"success": False, "message": "No valid documents"}
 
-        # Redact high-risk secrets/identifiers before embedding/storing.
-        from src.rag_redaction import redact_for_index
-        valid = [
-            ((redact_for_index(t)[0] if m.get("redact", True) else t), m)
-            for t, m in valid
-        ]
+        # Redact high-risk secrets/identifiers before embedding/storing, then
+        # persist the fail-closed graded sensitivity label as metadata.
+        from src.rag_sensitivity import classify_and_redact
+        processed = []
+        for t, m in valid:
+            if m.get("redact", True):
+                rt, label = classify_and_redact(t, m.get("sensitivity"))
+                processed.append((rt, {**m, "sensitivity": label}))
+            else:
+                processed.append((t, m))
+        valid = processed
 
         added_ids = set()
         attempted_new = False
