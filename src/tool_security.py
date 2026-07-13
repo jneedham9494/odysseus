@@ -5,52 +5,19 @@ from __future__ import annotations
 import logging
 from typing import Optional, Set
 
+from src import tool_policy_table
+
 logger = logging.getLogger(__name__)
 
 
 # Tools regular/public users must not execute directly. These either expose
 # server/runtime access, sensitive user data, external messaging, persistent
 # state changes, or generic loopback/integration surfaces.
-NON_ADMIN_BLOCKED_TOOLS = {
-    "bash",
-    "python",
-    "manage_bg_jobs",
-    "read_file",
-    "write_file",
-    "edit_file",
-    "grep",
-    "glob",
-    "ls",
-    "get_workspace",
-    "search_chats",
-    "manage_memory",
-    "manage_skills",
-    "manage_tasks",
-    "manage_endpoints",
-    "manage_mcp",
-    "manage_webhooks",
-    "manage_tokens",
-    "manage_documents",
-    "manage_settings",
-    "api_call",
-    "app_api",
-    "send_email",
-    "reply_to_email",
-    "list_emails",
-    "read_email",
-    "resolve_contact",
-    "manage_contact",
-    "manage_calendar",
-    "vault_search",
-    "vault_get",
-    "vault_unlock",
-    "download_model",
-    "serve_model",
-    "serve_preset",
-    "stop_served_model",
-    "cancel_download",
-    "adopt_served_model",
-}
+# DERIVED from the single source of truth in src.tool_policy_table (the
+# ``non_admin_blocked`` flag) — see that module's ``_TABLE``.
+NON_ADMIN_BLOCKED_TOOLS = tool_policy_table.NON_ADMIN_BLOCKED_TOOLS
+# Name-prefix namespaces public users must not execute (MCP tools).
+NON_ADMIN_BLOCKED_PREFIXES = tool_policy_table.NON_ADMIN_BLOCKED_PREFIXES
 
 
 # Plan mode: the agent may investigate but must not mutate anything. Only these
@@ -101,23 +68,9 @@ PLAN_MODE_READONLY_TOOLS = {
 # failed import still blocks them (fail closed, never open). Only mutators belong
 # here — read-only tools are covered by the allowlist. Keep in sync when adding
 # new mutating tools.
-_PLAN_MODE_KNOWN_MUTATORS = {
-    "write_file", "create_document", "edit_document", "update_document",
-    "suggest_document", "manage_documents", "create_session", "manage_session",
-    "send_to_session", "pipeline", "manage_memory", "manage_skills",
-    "manage_tasks", "manage_notes", "manage_endpoints", "manage_mcp",
-    "manage_webhooks", "manage_tokens", "manage_settings", "manage_contact",
-    "manage_calendar", "api_call", "app_api", "ui_control",
-    "send_email", "reply_to_email", "bulk_email", "delete_email",
-    "archive_email", "mark_email_read", "download_model", "serve_model",
-    "stop_served_model", "cancel_download", "adopt_served_model", "serve_preset",
-    "generate_image", "edit_image", "trigger_research", "manage_research",
-    # Shell is never read-only-safe; block it explicitly so it stays out of plan
-    # mode even if the schema list fails to load.
-    "bash", "python",
-    # Controls shell processes (kill); plan mode can't run bash anyway.
-    "manage_bg_jobs",
-}
+# DERIVED from the single source of truth in src.tool_policy_table (the
+# ``plan_mode_mutator`` flag) — declare a new mutator's tier there, not here.
+_PLAN_MODE_KNOWN_MUTATORS = tool_policy_table.PLAN_MODE_MUTATORS
 
 
 def plan_mode_disabled_tools() -> Set[str]:
@@ -163,7 +116,7 @@ def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
         return False
     if not isinstance(tool_name, str):
         return True
-    return tool_name in NON_ADMIN_BLOCKED_TOOLS or tool_name.startswith("mcp__")
+    return tool_name in NON_ADMIN_BLOCKED_TOOLS or tool_name.startswith(NON_ADMIN_BLOCKED_PREFIXES)
 
 
 def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:

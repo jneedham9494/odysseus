@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from src.constants import DATA_DIR
 from src.settings import get_setting
+from src import tool_policy_table
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +31,16 @@ PENDING_DB = os.path.join(DATA_DIR, "pending_actions.db")
 # External / world-changing tools worth gating behind human approval.
 # (send_email/reply_to_email/bulk_email already have their own confirm via the
 # agent_email_confirm setting, so they're intentionally omitted here.)
-DEFAULT_GATED_TOOLS = {
-    "manage_calendar", "manage_contact",
-    "ui_control",
-    "write_file", "edit_file", "bash", "python",
-    "generate_image", "edit_image",
-}
+# DERIVED from the single source of truth in src.tool_policy_table — see that
+# module's ``_TABLE`` for the per-tool classification.
+DEFAULT_GATED_TOOLS = tool_policy_table.GATED_TOOLS
 # api_call / app_api are gated ONLY for write methods — read-only GET/HEAD calls
 # (e.g. "is anyone home?", "what's my UPS load?") run freely so the gate isn't noisy.
-_METHOD_AWARE_TOOLS = {"api_call", "app_api"}
+_METHOD_AWARE_TOOLS = tool_policy_table.METHOD_AWARE_TOOLS
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # MCP tool-name prefixes to gate (browser-automation tools register as e.g.
 # "browser_navigate", "browser_click").
-GATED_MCP_PREFIXES = ("browser_", "playwright_")
+GATED_MCP_PREFIXES = tool_policy_table.GATED_PREFIXES
 
 
 def _is_write_api_call(content: Optional[str]) -> bool:
@@ -134,9 +132,8 @@ def requires_approval(tool_type: Optional[str], content: Optional[str] = None) -
 # operation (e.g. send_email via agent_email_confirm) but MUST also be caught by
 # the fail-closed net if the normal policy can't be evaluated. Listed here, not
 # in DEFAULT_GATED_TOOLS, so normal-operation behaviour is unchanged.
-_FAILCLOSED_EXTRA_MUTATORS = {
-    "send_email", "reply_to_email", "bulk_email", "delete_file", "move_file",
-}
+# DERIVED from src.tool_policy_table (the ``failclosed_mutator`` flag).
+_FAILCLOSED_EXTRA_MUTATORS = tool_policy_table.FAILCLOSED_EXTRA_MUTATORS
 
 
 def is_mutating_tool(tool_type: Optional[str], content: Optional[str] = None) -> bool:
