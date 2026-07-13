@@ -20,15 +20,19 @@ Python (the host has no node, so promptfoo/DeepEval were out) — nothing to
 ## Run it
 
 ```bash
-# on odin, from the repo root — pulls ASSISTANT_LITELLM_KEY from Infisical:
+# on odin, from the repo root — scores through the assistant's LiteLLM endpoint:
 bash eval/run.sh                              # default model gpt-oss:20b
 EVAL_MODEL=qwen3-coder:30b bash eval/run.sh   # eval a different model
 EVAL_MODEL=qwen3.6:27b     bash eval/run.sh
+EVAL_ENDPOINT="Ollama"     bash eval/run.sh   # score via a different named endpoint
 ```
 
-`run.sh` logs into Infisical with the `odin-host` machine identity, injects the
-assistant's `ASSISTANT_LITELLM_KEY`, and runs `run_eval.py`. No `.env`, no
-pasted keys.
+`run.sh` resolves `base_url` + `api_key` from the running container's
+`LiteLLM (traced)` `ModelEndpoint` DB record (the same endpoint the assistant
+uses) and runs `run_eval.py` **inside the container** — so the key never leaves
+the container, there's no Infisical/`.env`/pasted key, and LiteLLM keeps the
+Langfuse traces. Override the endpoint with `EVAL_ENDPOINT`, the container with
+`EVAL_CONTAINER`.
 
 ## The gate workflow
 
@@ -48,7 +52,9 @@ pasted keys.
 | `EVAL_JUDGE_MODEL` | = `EVAL_MODEL` | model that grades `llm_judge` cases |
 | `EVAL_THRESHOLD` | `0.80` | min overall pass-rate to exit 0 |
 | `EVAL_BASE_URL` | `http://172.18.0.10:4000/v1` | LiteLLM OpenAI-compatible base (use `http://litellm:4000/v1` from inside a container on `ai_default`) |
-| `EVAL_API_KEY` | — | set by `run.sh` from Infisical; overrideable |
+| `EVAL_API_KEY` | — | resolved by `run.sh` from the endpoint's DB record; overrideable |
+| `EVAL_ENDPOINT` | `LiteLLM (traced)` | name of the `ModelEndpoint` to score through |
+| `EVAL_CONTAINER` | `odysseus-mine-odysseus-1` | container whose DB + network the eval runs in |
 | `EVAL_REPORT` | `eval/report.json` | machine-readable results |
 
 ## The golden set (`golden_set.py`)
