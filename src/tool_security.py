@@ -52,6 +52,9 @@ PLAN_MODE_READONLY_TOOLS = {
     "resolve_contact",
     "chat_with_model",
     "ask_teacher",
+    # Read-only source summarizers (issue only GET requests, never mutate).
+    "summarize_miniflux_unread",
+    "summarize_paperless_recent",
 }
 
 
