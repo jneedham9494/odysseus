@@ -16,6 +16,7 @@ Public surface:
 """
 from __future__ import annotations
 
+from src.admission.guard_stage import GuardEscalationStage
 from src.admission.pipeline import AdmissionPipeline, build_default_pipeline
 from src.admission.policy_view import ToolPolicyView
 from src.admission.stages import (
@@ -42,6 +43,7 @@ __all__ = [
     "PolicyBlockStage",
     "TaintApprovalStage",
     "ConfirmApprovalStage",
+    "GuardEscalationStage",
     "requires_confirm_approval_failclosed",
     "requires_taint_approval_safe",
     "AdmissionContext",

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Sequence
 
+from src.admission.guard_stage import GuardEscalationStage
 from src.admission.stages import (
     ConfirmApprovalStage,
     PolicyBlockStage,
@@ -71,14 +72,21 @@ class AdmissionPipeline:
 
 
 def build_default_pipeline() -> AdmissionPipeline:
-    """The default pipeline: hard block → taint → auto-confirm approval.
+    """The default pipeline: hard block → taint → auto-confirm → llama-guard.
 
-    This exactly reproduces the original inline gate in ``stream_agent_loop``.
+    The first three stages reproduce the original inline gate in
+    ``stream_agent_loop`` (hard blocks + taint/HITL BEFORE the softer confirm
+    check). :class:`GuardEscalationStage` (MR-20) is registered LAST as an
+    escalate-only, defence-in-depth layer: because the pipeline returns the first
+    non-ALLOW verdict, it only ever runs on calls the deterministic stages
+    ALLOWed, so it can turn a would-be ALLOW into GATE on high taint->sink risk
+    but can never downgrade an earlier GATE/DENY. Off by default.
     """
     return AdmissionPipeline(
         [
             PolicyBlockStage(),
             TaintApprovalStage(),
             ConfirmApprovalStage(),
+            GuardEscalationStage(),
         ]
     )
