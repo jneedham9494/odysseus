@@ -7,6 +7,7 @@ from typing import List, Dict, Set, Any, Tuple
 from dataclasses import dataclass
 
 from src.markitdown_runtime import MARKITDOWN_EXTS
+from src.rag_types import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,29 @@ def load_personal_index(
             files.append({"name": display, "path": p, "size": size, "chunks": chunks})
     return files
 
+def _keyword_scored(personal_index: List[Dict], query: str, k: int) -> List[Tuple[int, str, int, str]]:
+    """Score index chunks by keyword overlap.
+
+    Returns the top-``k`` ``(score, filename, chunk_index, chunk_text)`` tuples,
+    highest score first. Shared by the bare-string and record variants so the
+    scoring logic is not duplicated.
+    """
+    q = tokenize(query)
+    if not q:
+        return []
+
+    scored: List[Tuple[int, str, int, str]] = []
+    for f in personal_index:
+        if not isinstance(f, dict):
+            continue
+        for idx, ch in enumerate(f.get("chunks") or []):
+            score = len(q & tokenize(ch))
+            if score > 0:
+                scored.append((score, f.get("name", ""), idx, ch))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[:k]
+
+
 def retrieve_personal_keyword(personal_index: List[Dict], query: str, k: int = 5) -> List[str]:
     """
     Retrieve relevant documents using keyword search.
@@ -128,24 +152,30 @@ def retrieve_personal_keyword(personal_index: List[Dict], query: str, k: int = 5
     Returns:
         List of formatted search results
     """
-    q = tokenize(query)
-    if not q:
-        return []
+    return [
+        f"[{fname} :: chunk {idx+1}]\n{ch}"
+        for _score, fname, idx, ch in _keyword_scored(personal_index, query, k)
+    ]
 
-    scored = []
-    for f in personal_index:
-        if not isinstance(f, dict):
-            continue
-        for idx, ch in enumerate(f.get("chunks") or []):
-            score = len(q & tokenize(ch))
-            if score > 0:
-                scored.append((score, f.get("name", ""), idx, ch))
-    scored.sort(key=lambda x: x[0], reverse=True)
 
-    out = []
-    for s, fname, idx, ch in scored[:k]:
-        out.append(f"[{fname} :: chunk {idx+1}]\n{ch}")
-    return out
+def retrieve_personal_keyword_records(
+    personal_index: List[Dict], query: str, k: int = 5
+) -> List[RetrievedChunk]:
+    """Keyword-search variant that keeps metadata attached.
+
+    Local index chunks have no vector-store metadata, so we attach a minimal
+    dict (``source``/``chunk``/``retrieval``). Note there is NO ``taint`` key:
+    local personal files are trusted content. The record shape matches the
+    vector path so a downstream taint hook can treat both uniformly.
+    """
+    return [
+        RetrievedChunk(
+            text=ch,
+            metadata={"source": fname, "chunk": idx, "retrieval": "keyword"},
+            score=float(score),
+        )
+        for score, fname, idx, ch in _keyword_scored(personal_index, query, k)
+    ]
 
 def retrieve_personal(personal_index: List[Dict], query: str, k: int = 5,
                      rag_manager=None) -> List[str]:
@@ -185,6 +215,45 @@ def retrieve_personal(personal_index: List[Dict], query: str, k: int = 5,
 
     # Fall back to keyword search
     return retrieve_personal_keyword(personal_index, query, k)
+
+
+def retrieve_personal_records(
+    personal_index: List[Dict], query: str, k: int = 5, rag_manager=None
+) -> List[RetrievedChunk]:
+    """Metadata-carrying counterpart to :func:`retrieve_personal` (taint seam).
+
+    Vector path: carries the full vector-store metadata dict UNMODIFIED, so
+    provenance keys (taint/source_type/sensitivity) survive to any consumer that
+    later feeds this content into model context. Keyword fallback: attaches
+    minimal local-file metadata with no taint (trusted content).
+
+    Unlike :func:`retrieve_personal`, the text is NOT pre-formatted with the
+    filename — the source lives in ``metadata`` so it cannot be lost. See
+    ``src/rag_types.py``.
+
+    Args:
+        personal_index: The loaded document index.
+        query: The search query.
+        k: Number of results to return.
+        rag_manager: Optional RAGManager instance for vector search.
+
+    Returns:
+        List of ``RetrievedChunk`` records (empty when the query is empty).
+    """
+    if not query:
+        return []
+
+    if rag_manager:
+        try:
+            vector_results = rag_manager.search(query, k)
+            if vector_results:
+                return [
+                    RetrievedChunk.from_search_result(r) for r in vector_results
+                ]
+        except Exception as e:
+            logger.warning(f"Vector search failed, falling back to keyword search: {e}")
+
+    return retrieve_personal_keyword_records(personal_index, query, k)
 
 
 def _string_list(values) -> list[str]:
@@ -402,8 +471,20 @@ class PersonalDocsManager:
         logger.info(f"Refreshed index: {len(self.index)} documents from {len(self.indexed_directories) + 1} directories")
 
     def retrieve(self, query: str, k: int = 5) -> List[str]:
-        """Retrieve relevant documents for a query."""
+        """Retrieve relevant documents for a query (bare strings).
+
+        DROPS provenance metadata. Use :meth:`retrieve_records` for any path
+        feeding retrieved content into model context (see ``src/rag_types.py``).
+        """
         return retrieve_personal(self.index, query, k, self.rag_manager)
+
+    def retrieve_records(self, query: str, k: int = 5) -> List[RetrievedChunk]:
+        """Retrieve documents WITH provenance metadata attached (taint seam).
+
+        Metadata-carrying counterpart to :meth:`retrieve`: taint/source_type/
+        sensitivity survive the retrieval path. See ``src/rag_types.py``.
+        """
+        return retrieve_personal_records(self.index, query, k, self.rag_manager)
 
     def get_file_list(self) -> List[Dict[str, Any]]:
         """Get list of indexed files with metadata."""

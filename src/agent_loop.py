@@ -22,6 +22,7 @@ from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
+from src.admission import AdmissionContext, Verdict, build_default_pipeline
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -41,37 +42,27 @@ logger = logging.getLogger(__name__)
 
 def _needs_approval(tool_type, content=None) -> bool:
     """True if this tool must be queued for human approval (agent_tool_confirm).
-    Lazy-imported so a problem in the approval module can never break the loop.
 
-    Fails CLOSED: if the full policy check raises, gate mutating tools rather
-    than letting them run unchecked — unless confirmation is clearly disabled."""
-    try:
-        from src.pending_actions import requires_approval
-        return bool(requires_approval(tool_type, content))
-    except Exception:
-        logger.warning("approval policy check failed for %r; failing closed", tool_type)
-        try:
-            from src.pending_actions import confirm_enabled
-            if not confirm_enabled():
-                return False  # user has gating off → don't stall their actions
-        except Exception:
-            pass  # can't even read the setting → assume gating may be on
-        try:
-            from src.pending_actions import is_mutating_tool
-            return is_mutating_tool(tool_type, content)
-        except Exception:
-            return True  # total failure → gate everything (safest)
+    Thin wrapper preserved for existing callers/tests; the canonical fail-closed
+    logic now lives in the admission package (single implementation)."""
+    from src.admission import requires_confirm_approval_failclosed
+    return requires_confirm_approval_failclosed(tool_type, content)
 
 
 def _tainted_needs_approval(session_id, tool_type, content=None) -> bool:
     """True if a credentialed action must be approved because the session has
     ingested untrusted web/browser content (EchoLeak / tier-split defense).
-    Forces approval even when auto-confirm is off."""
-    try:
-        from src.context_taint import requires_taint_approval
-        return requires_taint_approval(session_id, tool_type, content)
-    except Exception:
-        return False
+
+    Thin wrapper preserved for existing callers/tests; canonical logic lives in
+    the admission package."""
+    from src.admission import requires_taint_approval_safe
+    return requires_taint_approval_safe(session_id, tool_type, content)
+
+
+# The tool-admission gate: one ordered, fail-closed pipeline. Replaces the inline
+# block/approve/execute if/elif/else in stream_agent_loop. Future gates register
+# onto this pipeline rather than editing the loop.
+_ADMISSION_PIPELINE = build_default_pipeline()
 
 
 def _load_mcp_disabled_map() -> Dict[str, set]:
@@ -2842,16 +2833,26 @@ async def stream_agent_loop(
             else:
                 cmd_display = block.content.strip()
 
-            if tool_policy and tool_policy.blocks(block.tool_type):
+            # Tool-admission gate: one ordered, fail-closed pipeline yields
+            # DENY (hard block), GATE (hold for approval), or ALLOW (execute).
+            # This preserves the original inline block/approve/execute logic.
+            _decision = _ADMISSION_PIPELINE.evaluate(AdmissionContext(
+                tool_type=block.tool_type,
+                content=block.content,
+                session_id=session_id,
+                owner=owner,
+                workspace=workspace,
+                tool_policy=tool_policy,
+            ))
+            if _decision.verdict is Verdict.DENY:
                 desc = f"{block.tool_type}: BLOCKED"
                 result = {
-                    "error": tool_policy.reason_for(block.tool_type),
+                    "error": _decision.reason,
                     "exit_code": 1,
                     "blocked": True,
                 }
                 logger.info("Tool blocked before start by policy: %s", block.tool_type)
-            elif (_needs_approval(block.tool_type, block.content)
-                  or _tainted_needs_approval(session_id, block.tool_type, block.content)):
+            elif _decision.verdict is Verdict.GATE:
                 # Approval gate: stash mutating / real-world actions for the
                 # user's one-tap approval instead of executing them inline.
                 # Also triggers when the session is tainted by untrusted web

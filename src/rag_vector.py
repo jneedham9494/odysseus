@@ -26,6 +26,7 @@ from src.embedding_lanes import (
     migrate_legacy_collection,
     query_lanes,
 )
+from src.rag_types import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -702,5 +703,23 @@ class VectorRAG:
     # Convenience
     # ------------------------------------------------------------------
 
+    def retrieve_records(
+        self, query: str, k: int = 5, owner: Optional[str] = None
+    ) -> List[RetrievedChunk]:
+        """Retrieve chunks WITH provenance metadata attached (taint seam).
+
+        Unlike :meth:`retrieve`, which returns bare strings and DROPS metadata,
+        this returns ``RetrievedChunk`` records so taint/source_type/sensitivity
+        survive to any path that feeds the text into model context. Prefer this
+        for such paths. See ``src/rag_types.py``.
+        """
+        return [
+            RetrievedChunk.from_search_result(r)
+            for r in self.search(query, k, owner=owner)
+        ]
+
     def retrieve(self, query: str, k: int = 5) -> List[str]:
-        return [r['document'] for r in self.search(query, k)]
+        # Bare-string convenience; DROPS provenance metadata. Any path that
+        # feeds retrieved content into model context must use retrieve_records()
+        # instead so taint/source_type/sensitivity survive (see src/rag_types.py).
+        return [r.text for r in self.retrieve_records(query, k)]
