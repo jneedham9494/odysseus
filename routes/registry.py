@@ -156,6 +156,18 @@ def _build_codex(ctx: RegistrationContext) -> APIRouter:
     )
 
 
+def _build_pwa(ctx: RegistrationContext) -> APIRouter:
+    """Serve /manifest.json and /sw.js at root scope (MR-23 PWA).
+
+    STATIC_DIR is imported lazily here (not carried on the context) to keep the
+    registry's lazy-import design intact — nothing in this module pulls the app
+    constants until registration actually runs.
+    """
+    setup = getattr(importlib.import_module("routes.pwa_routes"), "setup_pwa_routes")
+    static_dir = getattr(importlib.import_module("core.constants"), "STATIC_DIR")
+    return setup(static_dir)
+
+
 # Ordered registry. Declaration order == mount order and must be preserved:
 # the original app.py mounted these in exactly this sequence.
 ROUTER_SPECS: list[RouterSpec] = [
@@ -198,6 +210,7 @@ ROUTER_SPECS: list[RouterSpec] = [
     RouterSpec("cleanup", _simple("routes.cleanup_routes", "setup_cleanup_routes", lambda c: (c.session_manager,))),
     RouterSpec("personal", _simple("routes.personal_routes", "setup_personal_routes", lambda c: (c.personal_docs_manager, c.rag_manager, c.rag_available))),
     RouterSpec("pending", _simple("routes.pending_routes", "setup_pending_routes")),
+    RouterSpec("autonomy", _simple("routes.autonomy_routes", "setup_autonomy_routes")),
     RouterSpec("embedding", _simple("routes.embedding_routes", "setup_embedding_routes")),
     RouterSpec("model", _simple("routes.model_routes", "setup_model_routes", lambda c: (c.model_discovery,))),
     RouterSpec("copilot", _simple("routes.copilot_routes", "setup_copilot_routes")),
@@ -229,6 +242,29 @@ ROUTER_SPECS: list[RouterSpec] = [
     RouterSpec("vault", _simple("routes.vault_routes", "setup_vault_routes")),
     RouterSpec("contacts", _simple("routes.contacts_routes", "setup_contacts_routes")),
     RouterSpec("companion", _simple("companion", "setup_companion_routes")),
+    # Connector ingest (n8n push, MR-4). setup_connector_routes() takes no args.
+    # The route proves identity with the dedicated INGEST_TOKEN itself, so it is
+    # auth-exempt at the middleware (see app.py AUTH_EXEMPT_EXACT — that entry
+    # must be added when this interface is enabled). Depends on the connector
+    # framework (MR-2); the route fails closed with 503 until MR-2 is merged.
+    RouterSpec("connector_ingest", _simple("routes.connector_routes", "setup_connector_routes")),
+    # MR-23 PWA + iOS Shortcuts. Root-scope manifest/service-worker so the SW can
+    # claim scope "/"; the capture endpoint self-gates on PWA_CAPTURE_ENABLED so
+    # it ships disabled by default. Path-distinct from every entry above, so
+    # declaration order here is not load-bearing.
+    RouterSpec("pwa", _build_pwa),
+    RouterSpec("capture", _simple("routes.capture_routes", "setup_capture_routes")),
+    # Voice loop (MR-21): owner-only audio-in -> STT -> agent -> TTS -> audio-out.
+    # Ships disabled (voice_loop_enabled=False); every voice-triggered action
+    # flows through stream_agent_loop's approval + taint gates, same as web chat.
+    RouterSpec(
+        "voice",
+        _simple(
+            "routes.voice_routes",
+            "setup_voice_routes",
+            lambda c: (c.stt_service, c.tts_service, c.session_manager),
+        ),
+    ),
 ]
 
 

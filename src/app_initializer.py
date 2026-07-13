@@ -10,6 +10,7 @@ from src.constants import (
 )
 from src.memory import MemoryManager
 from src.memory_provider import MemoryProviderRegistry, NativeMemoryProvider
+from src.memory_layered import LayeredMemoryProvider
 from services.memory.skills import SkillsManager
 from core.session_manager import SessionManager
 from core.models import set_session_manager
@@ -76,6 +77,10 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
 
     memory_provider_registry = MemoryProviderRegistry([
         NativeMemoryProvider(memory_manager, memory_vector),
+        # Layered episodic/semantic provider (MR-5). Distinct provider_id and
+        # tool names; shares the same JSON + vector backends without unifying
+        # them. Disabled from tool exposure by default flip via `enabled`.
+        LayeredMemoryProvider(memory_manager, memory_vector),
     ])
 
     # Initialize processors

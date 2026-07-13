@@ -36,6 +36,7 @@ from src.agent_tools import (
     ToolBlock,
     MAX_AGENT_ROUNDS,
 )
+from src.tool_capping import MAX_TOOLS_PER_REQUEST
 
 logger = logging.getLogger(__name__)
 
@@ -1878,6 +1879,7 @@ async def stream_agent_loop(
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
+    autonomous: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -2071,6 +2073,25 @@ async def stream_agent_loop(
                         )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
+    # Cap the surfaced tool set to a bounded, relevance-ranked size (MR-14).
+    # A large schema list degrades tool selection and inflates every request;
+    # keep the always-available tools plus the most relevant RAG-ranked ones.
+    # This is pre-prompt SELECTION (which schemas the model sees), not admission.
+    if not guide_only and _relevant_tools is not None and len(_relevant_tools) > MAX_TOOLS_PER_REQUEST:
+        from src.tool_capping import cap_tools_for_request
+        from src.tool_index import ALWAYS_AVAILABLE as _AA, get_tool_index as _gti
+        try:
+            _idx = _gti()
+        except Exception:
+            _idx = None
+        _before = len(_relevant_tools)
+        _relevant_tools = cap_tools_for_request(
+            _retrieval_query or "", _relevant_tools,
+            always_include=_AA, tool_index=_idx,
+        )
+        logger.info("[tool-rag] capped tools %d -> %d (limit %d)",
+                    _before, len(_relevant_tools), MAX_TOOLS_PER_REQUEST)
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
@@ -2312,6 +2333,17 @@ async def stream_agent_loop(
     _exhausted_rounds = False
 
     for round_num in range(1, max_rounds + 1):
+        # Kill-switch poll: an autonomous run aborts before its next self-initiated
+        # round if the operator engaged the global halt (one-tap ntfy kill-switch).
+        if autonomous:
+            try:
+                from src.autonomy_guard import is_halted as _autonomy_halted
+                if _autonomy_halted():
+                    logger.warning("[agent] autonomy HALTED mid-run; aborting at round %d", round_num)
+                    yield f'data: {json.dumps({"type": "autonomy_halted", "round": round_num})}\n\n'
+                    break
+            except Exception as _e:  # guard must never crash the loop
+                logger.warning("autonomy halt check failed: %s", _e)
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         native_tool_calls = []  # populated if model uses function calling
@@ -2843,6 +2875,7 @@ async def stream_agent_loop(
                 owner=owner,
                 workspace=workspace,
                 tool_policy=tool_policy,
+                autonomous=autonomous,
             ))
             if _decision.verdict is Verdict.DENY:
                 desc = f"{block.tool_type}: BLOCKED"

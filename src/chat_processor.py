@@ -257,6 +257,15 @@ class ChatProcessor:
                     results = rag_manager.search(message, k=5, owner=owner)
                     # Filter by similarity threshold
                     relevant = [r for r in results if r.get("similarity", 0) >= self.RAG_SIMILARITY_THRESHOLD]
+                    # MR-2b: retrieval-side taint enforcement. Connector content
+                    # is taint-stamped at write time (taint=untrusted,
+                    # source_type=connector:*); reading it into this session's
+                    # context is what activates the defense — a later
+                    # credentialed mutator then requires approval. Only the rows
+                    # actually surfaced to the model (`relevant`) taint. Sessionless
+                    # retrieval degrades safely (helper no-ops on a falsy id).
+                    from src.context_taint import taint_from_retrieved_rows
+                    taint_from_retrieved_rows(getattr(session, "id", None), relevant)
                     if relevant:
                         logger.info(f"RAG: {len(relevant)}/{len(results)} results above threshold {self.RAG_SIMILARITY_THRESHOLD}")
                         rag_sources = [

@@ -1,0 +1,33 @@
+[package]
+name = "egress-proxy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Egress-allowlist HTTP forward-proxy for the odysseus trust boundary (fail-closed)"
+license = "MIT"
+publish = false
+
+# SECURITY: this crate is the first Rust edge on the outbound trust boundary.
+# It intentionally has ZERO external dependencies so the audit surface is the
+# std library only and `cargo test` is fully hermetic (no registry fetch).
+#
+# The optional `mcp` feature is where an rmcp-based MCP server interface would
+# be added (see src/mcp.rs). It is OFF by default: a new inbound interface is a
+# new entry point and must ship disabled until it is authenticated and routed
+# through the existing approval queue. Enabling the feature today only compiles
+# a documented stub; it does not open a listener.
+[features]
+default = []
+mcp = []
+
+[lib]
+name = "egress_proxy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "egress-proxy"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2
+panic = "abort"

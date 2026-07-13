@@ -573,6 +573,7 @@ async def _execute_tool_block_impl(
         do_manage_contact,
         do_vault_search, do_vault_get, do_vault_unlock,
         do_app_api,
+        do_summarize_miniflux_unread, do_summarize_paperless_recent,
     )
 
     tool = block.tool_type
@@ -805,6 +806,12 @@ async def _execute_tool_block_impl(
         first_line = content.split("\n")[0].strip()[:60]
         desc = f"api_call: {first_line}"
         result = await do_api_call(content)
+    elif tool == "summarize_miniflux_unread":
+        desc = "summarize_miniflux_unread"
+        result = await do_summarize_miniflux_unread(content)
+    elif tool == "summarize_paperless_recent":
+        desc = "summarize_paperless_recent"
+        result = await do_summarize_paperless_recent(content)
     elif tool == "manage_endpoints":
         desc = "manage_endpoints"
         result = await do_manage_endpoints(content, owner=owner)

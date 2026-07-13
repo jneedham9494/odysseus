@@ -34,3 +34,10 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# Owner-only Telegram bridge (src/telegram_bot.py + src/telegram_runtime.py).
+# aiogram is an async long-poll Telegram client, so the bot needs NO inbound
+# ingress. Lazy-imported and DISABLED by default — with no TELEGRAM_BOT_TOKEN
+# (+ TELEGRAM_ALLOWED_USER_ID) configured, no bot is started and this dep is
+# never touched. Install only if you want to talk to the assistant from Telegram.
+aiogram>=3.13

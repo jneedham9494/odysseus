@@ -72,6 +72,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "manage_session", "manage_memory", "list_models",
              "ui_control", "generate_image", "ask_user", "update_plan",
              "manage_tasks", "api_call", "ask_teacher", "manage_skills",
+             "summarize_miniflux_unread", "summarize_paperless_recent",
              "suggest_document",
              "manage_endpoints", "manage_mcp", "manage_webhooks",
              "manage_tokens", "manage_documents", "manage_settings",
@@ -144,4 +145,6 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_tokens,
     do_manage_settings,
     do_api_call,
+    do_summarize_miniflux_unread,
+    do_summarize_paperless_recent,
 )

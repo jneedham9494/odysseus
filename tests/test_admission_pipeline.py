@@ -97,8 +97,12 @@ def test_tainted_credentialed_mutator_gates_and_matches_old(monkeypatch):
         new = _pipeline_decision(pipeline, None, "tainted-sess", "send_email", "hi")
         assert old == "gate"
         assert new == old
-        # Sanity: same tool in a CLEAN session with confirm off is allowed.
-        assert _pipeline_decision(pipeline, None, "clean", "send_email", "hi") == "allow"
+        # Sanity: in a CLEAN session send_email still gates — under MR-16 it is
+        # hitl-forever (people) and gates regardless of taint or confirm. The
+        # pipeline stays equal to the (live) inline logic here too. (Pre-MR-16 this
+        # was "allow": send_email was not in DEFAULT_GATED_TOOLS.)
+        assert _old_inline_decision(None, "clean", "send_email", "hi") == "gate"
+        assert _pipeline_decision(pipeline, None, "clean", "send_email", "hi") == "gate"
     finally:
         context_taint.clear("tainted-sess")
 
@@ -221,5 +225,16 @@ def test_register_stage_at_position_respects_order():
 
 def test_default_pipeline_stage_order():
     names = build_default_pipeline().stage_names
-    # Hard block first, taint (HITL) before the softer auto-confirm check.
-    assert names == ["tool_policy_block", "context_taint", "pending_actions"]
+    # Validation first (a malformed/unknown call is denied before any other stage
+    # sees it), then hard block, then the autonomy kill-switch (no-op for human
+    # calls), then taint (HITL) before the softer auto-confirm check. The autonomy
+    # stage-machine is registered LAST as an escalate-only, self-initiated-only guard.
+    assert names == [
+        "toolcall_validation",
+        "tool_policy_block",
+        "autonomy_kill_switch",
+        "context_taint",
+        "pending_actions",
+        "autonomy_stage",
+        "llama_guard",
+    ]

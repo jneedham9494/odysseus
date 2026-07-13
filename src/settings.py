@@ -37,6 +37,14 @@ DEFAULT_SETTINGS = {
     # have been observed inventing signatures and sending to real
     # recipients without confirmation.
     "agent_email_confirm": True,
+    # ── Phase-4 autonomy safety (src/autonomy_guard.py) ──
+    # Global self-initiation switch. DEFAULT OFF: nothing self-initiates unless the
+    # operator explicitly enables it. HITL-forever invariants (money/people/
+    # deletion/physical) still ALWAYS require a human even when this is on.
+    "autonomy_enabled": False,
+    # Shared secret for the headless one-tap ntfy kill-switch http action. Empty =
+    # the header-auth halt path is disabled (only an authed session can halt/resume).
+    "autonomy_kill_token": "",
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
@@ -56,6 +64,10 @@ DEFAULT_SETTINGS = {
     "stt_provider": "disabled",
     "stt_model": "base",
     "stt_language": "",
+    # Voice loop (MR-21): audio-in -> STT -> agent -> streamed TTS -> audio-out.
+    # Owner-only entry point; ships DISABLED — the /api/voice/turn endpoint 404s
+    # until an operator explicitly turns this on.
+    "voice_loop_enabled": False,
     "search_provider": "searxng",
     # Default fallback chain — when the primary provider fails or
     # rate-limits, we try DuckDuckGo next. Free, no API key required, so
@@ -189,6 +201,13 @@ DEFAULT_SETTINGS = {
         "admin_panel": "ctrl+shift+u",
         "cancel": "escape",
     },
+    # ── Phase-4 autonomy stage-machine (MR-19). SAFE-BY-DEFAULT / OFF ──
+    # Nothing self-initiates unless the operator explicitly enables autonomy
+    # AND raises the stage. See src/autonomy_stage_machine.py.
+    "autonomy_enabled": False,          # global self-initiation switch (OFF)
+    "autonomy_stage": 0,                # 0 observe-only .. 4 ceiling
+    "autonomy_kill_switch": False,      # operator emergency stop
+    "autonomy_ceiling_allowlist": [],   # Stage-4 proven-reversible actuators
 }
 
 DEFAULT_FEATURES = {

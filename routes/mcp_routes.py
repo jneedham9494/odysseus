@@ -268,6 +268,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=parsed_args,
                 env=parsed_env,
                 url=url,
+                admin_approved=True,  # explicit admin route: bypass curated-allowlist gate
             )
 
         status = mcp_manager.get_server_status(server_id)
@@ -306,6 +307,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                admin_approved=True,  # explicit admin route: bypass curated-allowlist gate
             )
 
             status = mcp_manager.get_server_status(server_id)
@@ -345,6 +347,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     args=args,
                     env=env,
                     url=srv.url,
+                    admin_approved=True,  # explicit admin route: bypass curated-allowlist gate
                 )
             else:
                 await mcp_manager.disconnect_server(server_id)
@@ -581,6 +584,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                admin_approved=True,  # explicit admin route: bypass curated-allowlist gate
             )
 
             if connected:

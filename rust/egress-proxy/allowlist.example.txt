@@ -1,0 +1,13 @@
+# Example egress allowlist. One entry per line.
+# Blank lines and lines starting with '#' are ignored.
+#
+# Exact host match:
+api.openai.com
+api.anthropic.com
+#
+# Subdomain wildcard (matches sub.example.com, NOT example.com itself):
+# *.githubusercontent.com
+#
+# NOTE: raw IP literals are ALWAYS refused and cannot be allowlisted.
+#       Names that resolve to private/loopback/metadata addresses are also
+#       refused at connect time (DNS-rebinding defense).

@@ -28,7 +28,7 @@ ROUTES_KEYWORDS = frozenset({"route", "routes", "api"})
 SERVICES_KEYWORDS = frozenset({
     "llm", "provider", "cookbook", "session", "history", "email",
     "calendar", "memory", "gallery", "document", "research", "mcp",
-    "scheduler", "webhook", "embedding",
+    "scheduler", "webhook", "embedding", "rerank", "reranker",
 })
 UNIT_KEYWORDS = frozenset({
     "parse", "parser", "parsing", "nonstring", "nondict",
