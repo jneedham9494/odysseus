@@ -620,6 +620,32 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "summarize_miniflux_unread",
+            "description": "Summarize the newest UNREAD entries from the user's Miniflux RSS reader (read-only; does not mark anything read). Returns a concise list of each item's title, feed, and publish date. Use for 'what's new in my feeds', 'summarize my unread RSS', 'catch me up on Miniflux'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max number of unread entries to fetch (1-50, default 20)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "summarize_paperless_recent",
+            "description": "Summarize the most recently added documents in the user's Paperless-ngx archive (read-only). Returns a concise list of each document's title, correspondent, type, and date. Use for 'what did I recently scan', 'summarize my recent Paperless docs', 'latest documents'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max number of recent documents to fetch (1-50, default 20)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "ask_teacher",
             "description": "Ask a more capable AI model for help when stuck on a difficult problem. The teacher provides guidance that can be saved as a learned skill.",
             "parameters": {

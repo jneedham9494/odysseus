@@ -46,8 +46,8 @@ _TAINTED_SESSIONS: dict[str, str] = {}
 # truth in src.tool_policy_table (see that module's ``_TABLE`` / ``_PATTERN_TABLE``).
 # Tools whose output is attacker-controllable external content.
 # Derived from the single source of truth in tool_policy_table. The searxng MCP
-# tool (`mcp__searxng__web_search`) is registered there as an untrusted source so
-# its web results taint the session too.
+# tool and the source-summarizer tools are registered there as untrusted sources
+# so their remote-feed/document content taints the session too.
 _UNTRUSTED_SOURCE_TOOLS = tool_policy_table.UNTRUSTED_SOURCE_TOOLS
 _UNTRUSTED_PREFIXES = tool_policy_table.UNTRUSTED_PREFIXES
 
@@ -56,6 +56,13 @@ _UNTRUSTED_PREFIXES = tool_policy_table.UNTRUSTED_PREFIXES
 # call, so it is classified by source_type rather than tool_type. This is the
 # seam a later MR uses to taint a session when connector content is retrieved.
 _UNTRUSTED_SOURCE_TYPE_PREFIX = "connector:"
+#
+# The summarize_* tools pull remote-feed / document content (RSS item titles and
+# feed names from Miniflux, document titles/content from Paperless) — all of it
+# controllable by whoever operates the feed or authors an ingested document, the
+# same threat class as web_fetch. They ingest that text straight into model
+# context, so they are taint SOURCES regardless of the fact that they never
+# mutate state (mutation is the wrong axis for this set).
 
 # Real-world credentialed mutators that must not auto-fire in a tainted context.
 _CREDENTIALED_MUTATORS = tool_policy_table.CREDENTIALED_MUTATORS

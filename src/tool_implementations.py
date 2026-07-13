@@ -1391,6 +1391,158 @@ async def do_api_call(content: str) -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# Source summarizers (READ-ONLY) — MR-12
+#
+# Thin agent tools that fetch recent items from a configured integration
+# (Miniflux unread entries, Paperless recent documents) via execute_api_call
+# and return a concise text summary. They issue only GET requests and never
+# mutate source state, so they are deliberately absent from the mutator/approval
+# gating lists (tool_security, pending_actions, context_taint).
+# ---------------------------------------------------------------------------
+
+_MINIFLUX_PRESETS = ("miniflux",)
+_PAPERLESS_PRESETS = ("paperless", "paperless-ngx", "paperlessngx", "paperless_ngx")
+
+
+def _find_enabled_integration(candidates: tuple) -> Optional[Dict[str, Any]]:
+    """Return the first enabled integration whose preset or name matches one of
+    `candidates` (case-insensitive), or None when none is configured."""
+    from src.integrations import load_integrations
+
+    wanted = {c.lower() for c in candidates}
+    for intg in load_integrations():
+        if not isinstance(intg, dict) or not intg.get("enabled", True):
+            continue
+        preset = (intg.get("preset") or "").lower()
+        name = (intg.get("name") or "").lower()
+        if preset in wanted or name in wanted:
+            return intg
+    return None
+
+
+def _extract_api_json(result: Dict[str, Any]) -> Optional[Any]:
+    """Decode the JSON payload from an execute_api_call success result.
+
+    execute_api_call returns {"output": "HTTP 200\\n<json>", ...}; strip the
+    status line and parse. Returns None when the body is not clean JSON
+    (e.g. truncated), letting callers degrade to an empty summary."""
+    output = result.get("output") or ""
+    body = output.split("\n", 1)[1] if "\n" in output else output
+    try:
+        return json.loads(body)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _display_field(value: Any) -> str:
+    """Render a possibly-nested integration field (dict with title/name, or a
+    scalar) as a trimmed display string; empty string for None."""
+    if isinstance(value, dict):
+        return str(value.get("title") or value.get("name") or "").strip()
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _clamp_limit(value: Any, default: int = 20, lo: int = 1, hi: int = 50) -> int:
+    """Coerce a caller-supplied item limit into the [lo, hi] range."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
+async def do_summarize_miniflux_unread(content: str) -> Dict:
+    """Summarize the newest unread Miniflux entries (READ-ONLY).
+
+    Fetches unread entries via the configured Miniflux integration and returns
+    a concise text summary of each item's title, feed, and publish date. Never
+    marks entries read or otherwise mutates state.
+    """
+    from src.integrations import execute_api_call
+
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    limit = _clamp_limit(args.get("limit"))
+    intg = _find_enabled_integration(_MINIFLUX_PRESETS)
+    if not intg:
+        return {"error": "No enabled Miniflux integration is configured.", "exit_code": 1}
+
+    result = await execute_api_call(
+        intg["id"], "GET", "/v1/entries",
+        params={"status": "unread", "limit": limit,
+                "order": "published_at", "direction": "desc"},
+    )
+    if result.get("exit_code", 1) != 0:
+        return result
+
+    data = _extract_api_json(result) or {}
+    entries = data.get("entries") or []
+    total = data.get("total", len(entries))
+
+    lines = [f"{total} unread Miniflux entries (showing {len(entries)}):"]
+    for i, entry in enumerate(entries, 1):
+        title = _display_field(entry.get("title")) or "(untitled)"
+        feed_obj = entry.get("feed")
+        feed = _display_field(feed_obj) if isinstance(feed_obj, dict) else ""
+        published = _display_field(entry.get("published_at"))[:10]
+        meta = " — ".join(p for p in (feed, published) if p)
+        lines.append(f"{i}. {title}" + (f" ({meta})" if meta else ""))
+
+    summary = "\n".join(lines)
+    return {"output": summary, "summary": summary,
+            "count": len(entries), "total": total, "exit_code": 0}
+
+
+async def do_summarize_paperless_recent(content: str) -> Dict:
+    """Summarize the most recently added Paperless documents (READ-ONLY).
+
+    Fetches recent documents via the configured Paperless integration and
+    returns a concise text summary of each item's title, correspondent,
+    document type, and creation date. Never mutates any document.
+    """
+    from src.integrations import execute_api_call
+
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    limit = _clamp_limit(args.get("limit"))
+    intg = _find_enabled_integration(_PAPERLESS_PRESETS)
+    if not intg:
+        return {"error": "No enabled Paperless integration is configured.", "exit_code": 1}
+
+    result = await execute_api_call(
+        intg["id"], "GET", "/api/documents/",
+        params={"ordering": "-created", "page_size": limit},
+    )
+    if result.get("exit_code", 1) != 0:
+        return result
+
+    data = _extract_api_json(result) or {}
+    docs = data.get("results") or []
+    total = data.get("count", len(docs))
+
+    lines = [f"{total} recent Paperless documents (showing {len(docs)}):"]
+    for i, doc in enumerate(docs, 1):
+        title = _display_field(doc.get("title")) or "(untitled)"
+        corr = _display_field(doc.get("correspondent"))
+        dtype = _display_field(doc.get("document_type"))
+        created = _display_field(doc.get("created"))[:10]
+        meta = " / ".join(p for p in (corr, dtype, created) if p)
+        lines.append(f"{i}. {title}" + (f" ({meta})" if meta else ""))
+
+    summary = "\n".join(lines)
+    return {"output": summary, "summary": summary,
+            "count": len(docs), "total": total, "exit_code": 0}
+
+
+# ---------------------------------------------------------------------------
 # Notes / checklists management tool
 # ---------------------------------------------------------------------------
 
