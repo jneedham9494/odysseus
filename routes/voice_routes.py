@@ -34,6 +34,34 @@ def _voice_enabled() -> bool:
     return bool(get_setting("voice_loop_enabled", False))
 
 
+def _effective_tool_policy(user_text: str):
+    """Compose the same tool policy the web chat path applies to an agent turn.
+
+    Voice is owner/admin-only, so per-user privilege stripping is moot here, but
+    the operator's GLOBAL ``disabled_tools`` kill-list MUST still apply. Without
+    it, a tool the operator globally disabled (e.g. ``bash``/``python``) would be
+    hard-DENYed on the web path yet execute via a voice turn — because the
+    admission ``PolicyBlockStage`` only DENIES when a ``tool_policy`` is present.
+    Mirror routes/chat_routes.py and src/task_scheduler.py, which both merge the
+    global list before entering ``stream_agent_loop``.
+
+    Passing ``user_text`` as the last user message also honors guide-only turns
+    identically to the web path.
+    """
+    from src.settings import get_setting
+    from src.tool_policy import build_effective_tool_policy
+
+    disabled: set[str] = set()
+    global_disabled = get_setting("disabled_tools", [])
+    if isinstance(global_disabled, list):
+        disabled.update(str(name) for name in global_disabled if name)
+
+    return build_effective_tool_policy(
+        disabled_tools=disabled,
+        last_user_message=user_text,
+    )
+
+
 def setup_voice_routes(stt_service, tts_service, session_manager):
     """Build the voice router. Services are injected for testability."""
     router = APIRouter(prefix="/api/voice", tags=["voice"])
@@ -102,6 +130,11 @@ def setup_voice_routes(stt_service, tts_service, session_manager):
             # path uses — so approval + taint gating apply identically.
             sess.add_message(ChatMessage("user", user_text, metadata={"source": "voice"}))
             messages = sess.get_context_messages()
+            # Enforce the operator's global tool kill-list on the voice path too,
+            # exactly like web chat + the task scheduler. tool_policy drives the
+            # admission DENY layer; disabled_tools strips them from the schema.
+            policy = _effective_tool_policy(user_text)
+            _disabled = policy.all_disabled_names()
             async for chunk in stream_agent_loop(
                 sess.endpoint_url,
                 sess.model,
@@ -109,6 +142,8 @@ def setup_voice_routes(stt_service, tts_service, session_manager):
                 headers=sess.headers,
                 session_id=session,
                 owner=owner or None,
+                tool_policy=policy,
+                disabled_tools=_disabled if _disabled else None,
             ):
                 yield chunk
 
