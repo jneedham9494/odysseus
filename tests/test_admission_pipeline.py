@@ -221,5 +221,15 @@ def test_register_stage_at_position_respects_order():
 
 def test_default_pipeline_stage_order():
     names = build_default_pipeline().stage_names
-    # Hard block first, taint (HITL) before the softer auto-confirm check.
-    assert names == ["tool_policy_block", "context_taint", "pending_actions"]
+    # Hard block first, taint (HITL) before the softer auto-confirm check, then
+    # the escalate-only llama-guard LAST. Guard-must-be-last is load-bearing:
+    # the pipeline returns the first non-ALLOW verdict, so registering the guard
+    # last guarantees it only ever runs on already-ALLOWed calls — it can
+    # escalate ALLOW→GATE but can never downgrade an earlier GATE/DENY.
+    assert names == [
+        "tool_policy_block",
+        "context_taint",
+        "pending_actions",
+        "llama_guard",
+    ]
+    assert names[-1] == "llama_guard"
