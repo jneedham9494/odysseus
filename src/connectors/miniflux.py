@@ -4,7 +4,10 @@ Pulls RSS entries from a Miniflux instance via the proven live agent path:
 ``execute_api_call`` against the JSON integration store (data/integrations.json,
 via load_integrations). RSS cleanly demonstrates the two axes: content is
 ``sensitivity=public`` yet provenance is ``taint=untrusted`` — injection-laden
-entries become inert, taint-stamped RAG rows.
+entries become taint-stamped RAG rows. That stamp is inert at rest; it is
+enforced at retrieval by MR-2b (context_taint.taint_from_retrieved_rows), which
+taints the session when such a row is read into context so a later credentialed
+mutator is forced through approval.
 
 NOTE: There is a parallel ``Integration`` ORM table (core/database.py) that this
 connector intentionally does NOT use. The live agent path (do_api_call ->
