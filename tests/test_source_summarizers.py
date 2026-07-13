@@ -227,6 +227,46 @@ def test_read_only_not_in_mutator_lists():
         assert name in PLAN_MODE_READONLY_TOOLS
 
 
+def test_summarizers_are_taint_sources():
+    """They ingest attacker-controllable remote-feed/document text into context,
+    so ingesting them must taint the session (same threat class as web_fetch).
+
+    Without this, a malicious RSS item title / Paperless document could inject
+    text that later auto-fires a credentialed action; the taint gate is what
+    forces such an action through human approval instead.
+    """
+    import src.context_taint as ct
+    for name in TOOL_NAMES:
+        assert ct.is_untrusted_source(name), f"{name} must be a taint source"
+
+
+def test_summarizers_taint_then_gate_credentialed_action():
+    """End-to-end: after a summarizer read taints the session, a later
+    credentialed mutator (send_email) is forced through approval."""
+    import src.context_taint as ct
+    sid = "sess-summarizer-taint"
+    ct._TAINTED_SESSIONS.discard(sid)
+    try:
+        assert ct.requires_taint_approval(sid, "send_email") is False
+        # The agent loop marks the session tainted for any untrusted source.
+        for name in TOOL_NAMES:
+            if ct.is_untrusted_source(name):
+                ct.mark_tainted(sid)
+        assert ct.is_tainted(sid)
+        assert ct.requires_taint_approval(sid, "send_email") is True
+    finally:
+        ct._TAINTED_SESSIONS.discard(sid)
+
+
+def test_summarizers_blocked_for_non_admin():
+    """Both hit the admin-scoped integration surface, so a non-admin (like the
+    api_call they wrap) must be blocked from reaching the owner's data."""
+    from src.tool_security import NON_ADMIN_BLOCKED_TOOLS, is_public_blocked_tool
+    for name in TOOL_NAMES:
+        assert name in NON_ADMIN_BLOCKED_TOOLS, f"{name} must be non-admin blocked"
+        assert is_public_blocked_tool(name) is True
+
+
 def test_dispatch_routes_summarizers(monkeypatch):
     """execute_tool_block must reach the do_* handlers for these tool types."""
     from src.agent_tools import ToolBlock
@@ -236,8 +276,11 @@ def test_dispatch_routes_summarizers(monkeypatch):
     monkeypatch.setattr("src.integrations.execute_api_call", rec)
     monkeypatch.setattr("src.integrations.load_integrations",
                         lambda: [{"id": "mf1", "preset": "miniflux", "enabled": True}])
+    # These tools are admin-scoped (in NON_ADMIN_BLOCKED_TOOLS); this test only
+    # checks that dispatch reaches the handler, so run as an admin owner.
+    monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
 
     desc, result = _run(te.execute_tool_block(
-        ToolBlock("summarize_miniflux_unread", "{}"), session_id=None, owner=None))
+        ToolBlock("summarize_miniflux_unread", "{}"), session_id=None, owner="admin"))
     assert result["exit_code"] == 0
     assert "Rust 2.0 released" in result["summary"]

@@ -20,7 +20,19 @@ from typing import Optional
 _TAINTED_SESSIONS: set[str] = set()
 
 # Tools whose output is attacker-controllable external content.
-_UNTRUSTED_SOURCE_TOOLS = {"web_fetch", "web_search"}
+#
+# The summarize_* tools pull remote-feed / document content (RSS item titles and
+# feed names from Miniflux, document titles/content from Paperless) — all of it
+# controllable by whoever operates the feed or authors an ingested document, the
+# same threat class as web_fetch. They ingest that text straight into model
+# context, so they are taint SOURCES regardless of the fact that they never
+# mutate state (mutation is the wrong axis for this set).
+_UNTRUSTED_SOURCE_TOOLS = {
+    "web_fetch",
+    "web_search",
+    "summarize_miniflux_unread",
+    "summarize_paperless_recent",
+}
 _UNTRUSTED_PREFIXES = ("browser_", "playwright_")
 
 # Real-world credentialed mutators that must not auto-fire in a tainted context.

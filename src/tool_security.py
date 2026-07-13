@@ -34,6 +34,13 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "manage_settings",
     "api_call",
     "app_api",
+    # Read-only source summarizers hit the same admin-scoped integration surface
+    # as api_call (global stored credentials, no owner scoping), so a non-admin
+    # blocked from api_call must not reach the owner's Paperless documents or
+    # Miniflux feed through them. "Read-only" does not exempt a sensitive-data
+    # reader — read_email/list_emails are blocked here for the same reason.
+    "summarize_miniflux_unread",
+    "summarize_paperless_recent",
     "send_email",
     "reply_to_email",
     "list_emails",
