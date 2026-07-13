@@ -16,6 +16,7 @@ Public surface:
 """
 from __future__ import annotations
 
+from src.admission.autonomy_stage import AutonomyStageStage
 from src.admission.kill_switch import KillSwitchStage
 from src.admission.pipeline import AdmissionPipeline, build_default_pipeline
 from src.admission.policy_view import ToolPolicyView
@@ -46,6 +47,7 @@ __all__ = [
     "TaintApprovalStage",
     "ConfirmApprovalStage",
     "ToolCallValidationStage",
+    "AutonomyStageStage",
     "requires_confirm_approval_failclosed",
     "requires_taint_approval_safe",
     "AdmissionContext",

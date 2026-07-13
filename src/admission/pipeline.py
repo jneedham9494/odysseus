@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Sequence
 
+from src.admission.autonomy_stage import AutonomyStageStage
 from src.admission.kill_switch import KillSwitchStage
 from src.admission.stages import (
     ConfirmApprovalStage,
@@ -73,15 +74,16 @@ class AdmissionPipeline:
 
 
 def build_default_pipeline() -> AdmissionPipeline:
-    """The default pipeline: validate → hard block → kill-switch → taint → confirm.
+    """Default pipeline: validate → block → kill-switch → taint → confirm → autonomy.
 
     Ordering rationale: toolcall-validation runs FIRST so a malformed or unknown
-    call is DENIED before any policy/autonomy/taint/approval stage considers it —
-    a call that cannot be dispatched should never be gated for a human either.
-    PolicyBlock (hard DENY) is next. The autonomy kill-switch follows — a no-op
-    for human-initiated calls, but for self-initiated ones it applies the hardest
-    autonomy stops (halt/breaker DENY, HITL-forever/autonomy-off GATE) before the
-    softer taint (EchoLeak) GATE and auto-confirm approval GATE.
+    call is DENIED before any other stage considers it. PolicyBlock (hard DENY) is
+    next, then the autonomy kill-switch (a no-op for human calls; for self-initiated
+    ones it applies halt/breaker DENY and HITL-forever/autonomy-off GATE). Taint
+    (EchoLeak) GATE and auto-confirm approval GATE follow. The autonomy stage-machine
+    (MR-19) is registered LAST as an escalate-only guard: it only restricts
+    SELF-INITIATED calls and is a no-op ALLOW for human ones; it ships DISABLED
+    (autonomy off, Stage 0).
     """
     return AdmissionPipeline(
         [
@@ -90,5 +92,6 @@ def build_default_pipeline() -> AdmissionPipeline:
             KillSwitchStage(),
             TaintApprovalStage(),
             ConfirmApprovalStage(),
+            AutonomyStageStage(),
         ]
     )

@@ -197,6 +197,13 @@ DEFAULT_SETTINGS = {
         "admin_panel": "ctrl+shift+u",
         "cancel": "escape",
     },
+    # ── Phase-4 autonomy stage-machine (MR-19). SAFE-BY-DEFAULT / OFF ──
+    # Nothing self-initiates unless the operator explicitly enables autonomy
+    # AND raises the stage. See src/autonomy_stage_machine.py.
+    "autonomy_enabled": False,          # global self-initiation switch (OFF)
+    "autonomy_stage": 0,                # 0 observe-only .. 4 ceiling
+    "autonomy_kill_switch": False,      # operator emergency stop
+    "autonomy_ceiling_allowlist": [],   # Stage-4 proven-reversible actuators
 }
 
 DEFAULT_FEATURES = {

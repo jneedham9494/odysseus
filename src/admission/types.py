@@ -68,7 +68,8 @@ class AdmissionContext:
     tool_policy: Any = None
     # True when the tool call is SELF-INITIATED by an autonomous run (task
     # scheduler / background loop) rather than driven by a live human. The
-    # autonomy kill-switch stage only restricts self-initiated calls.
+    # autonomy kill-switch AND stage-machine stages only restrict self-initiated
+    # calls; human-initiated calls leave this False and bypass them entirely.
     autonomous: bool = False
 
 
