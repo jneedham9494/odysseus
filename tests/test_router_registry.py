@@ -33,14 +33,15 @@ from routes.registry import (
 # The routers app.py mounted before the refactor, in mount order. This is the
 # characterization snapshot: it must not change without an intentional edit.
 EXPECTED_ORDER: list[str] = [
-    "auth", "upload", "emoji", "session", "admin_wipe", "memory", "skills",
-    "chat", "research", "history", "search", "preset", "diagnostics", "cleanup",
-    "personal", "pending", "embedding", "model", "copilot",
-    "chatgpt_subscription", "tts", "stt", "document", "signature", "gallery",
-    "editor_draft", "task", "assistant", "calendar", "shell", "cookbook",
-    "workspace", "hwfit", "compare", "prefs", "backup", "font", "mcp",
-    "webhook", "api_token", "note", "email", "codex", "claude", "vault",
-    "contacts", "companion",
+    "auth", "upload", "emoji", "session", "admin_wipe", "memory",
+    "skills", "chat", "research", "history", "search", "preset",
+    "diagnostics", "cleanup", "personal", "pending", "autonomy",
+    "embedding", "model", "copilot", "chatgpt_subscription", "tts",
+    "stt", "document", "signature", "gallery", "editor_draft", "task",
+    "assistant", "calendar", "shell", "cookbook", "workspace", "hwfit",
+    "compare", "prefs", "backup", "font", "mcp", "webhook", "api_token",
+    "note", "email", "codex", "claude", "vault", "contacts",
+    "companion", "connector_ingest", "pwa", "capture",
 ]
 
 
