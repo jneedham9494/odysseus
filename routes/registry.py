@@ -230,6 +230,12 @@ ROUTER_SPECS: list[RouterSpec] = [
     RouterSpec("vault", _simple("routes.vault_routes", "setup_vault_routes")),
     RouterSpec("contacts", _simple("routes.contacts_routes", "setup_contacts_routes")),
     RouterSpec("companion", _simple("companion", "setup_companion_routes")),
+    # Connector ingest (n8n push, MR-4). setup_connector_routes() takes no args.
+    # The route proves identity with the dedicated INGEST_TOKEN itself, so it is
+    # auth-exempt at the middleware (see app.py AUTH_EXEMPT_EXACT — that entry
+    # must be added when this interface is enabled). Depends on the connector
+    # framework (MR-2); the route fails closed with 503 until MR-2 is merged.
+    RouterSpec("connector_ingest", _simple("routes.connector_routes", "setup_connector_routes")),
 ]
 
 
