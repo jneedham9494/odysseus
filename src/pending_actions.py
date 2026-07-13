@@ -225,7 +225,18 @@ def _notify(pid: str, summary: str) -> None:
 
     headers = {"Title": "Assistant action needs approval", "Priority": "high", "Tags": "warning"}
     base = (get_setting("app_base_url", "") or "").rstrip("/")
+    actions = []
     if base:
-        headers["Actions"] = f"view, Open queue, {base}/?pending={pid}"
+        actions.append(f"view, Open queue, {base}/?pending={pid}")
+    # One-tap kill-switch: a headless ntfy http action that HALTS all autonomous
+    # action. Only added when a kill-token is configured (see autonomy_routes).
+    kill_token = get_setting("autonomy_kill_token", "") or ""
+    if base and kill_token:
+        actions.append(
+            f"http, HALT autonomy, {base}/api/autonomy/halt, method=POST, "
+            f"headers.X-Autonomy-Token={kill_token}, clear=true"
+        )
+    if actions:
+        headers["Actions"] = "; ".join(actions)
     req = urllib.request.Request(url, data=summary.encode("utf-8"), headers=headers, method="POST")
     urllib.request.urlopen(req, timeout=5)

@@ -222,10 +222,15 @@ def test_register_stage_at_position_respects_order():
 def test_default_pipeline_stage_order():
     names = build_default_pipeline().stage_names
     # Validation first (a malformed/unknown call is denied before any other stage
-    # sees it), then hard block, taint (HITL) before the softer auto-confirm check.
+    # sees it), then hard block, then the autonomy kill-switch (no-op for human
+    # calls), then taint (HITL) before the softer auto-confirm check. The autonomy
+    # stage-machine is registered LAST as an escalate-only, self-initiated-only guard.
     assert names == [
         "toolcall_validation",
         "tool_policy_block",
+        "autonomy_kill_switch",
         "context_taint",
         "pending_actions",
+        "autonomy_stage",
+        "llama_guard",
     ]
