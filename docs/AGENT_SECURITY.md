@@ -1,4 +1,4 @@
-# Agent Security Posture (openclaw fork)
+# Agent Security Posture (Argos — Odysseus fork)
 
 Foundation-phase hardening (W2): make prompt-injection and rogue/buggy agent
 behaviour structurally unable to leak secrets or take unapproved real-world

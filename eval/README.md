@@ -1,4 +1,4 @@
-# openclaw eval gate
+# Argos eval gate
 
 A small, dependency-free golden-set eval that answers one question before you
 promote a **model or system-prompt change**: *did it get worse?*

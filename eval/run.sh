@@ -1,5 +1,5 @@
 #!/bin/bash
-# openclaw eval gate — pull the assistant's LiteLLM key from Infisical and run the
+# Argos eval gate — pull the assistant's LiteLLM key from Infisical and run the
 # golden set against the LiteLLM router. Runs ON ODIN (tailnet-only models are
 # unreachable from GitHub runners). Exits non-zero if pass-rate < EVAL_THRESHOLD.
 #

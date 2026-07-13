@@ -1,4 +1,4 @@
-"""Owner-only Telegram bridge to the openclaw agent (aiogram long-poll).
+"""Owner-only Telegram bridge to the Argos agent (aiogram long-poll).
 
 Lets the configured OWNER talk to the assistant from Telegram: on a message we
 resolve/create the owner's session and run the SAME agent path the web chat uses
