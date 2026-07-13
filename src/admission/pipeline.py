@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Sequence
 
+from src.admission.kill_switch import KillSwitchStage
 from src.admission.stages import (
     ConfirmApprovalStage,
     PolicyBlockStage,
@@ -72,19 +73,21 @@ class AdmissionPipeline:
 
 
 def build_default_pipeline() -> AdmissionPipeline:
-    """The default pipeline: validate → hard block → taint → auto-confirm approval.
+    """The default pipeline: validate → hard block → kill-switch → taint → confirm.
 
-    Ordering rationale (hard structural blocks + HITL + taint before softer
-    checks): the toolcall-validation stage runs FIRST so a malformed or unknown
-    call is DENIED before any policy/taint/approval stage even considers it — a
-    call that cannot be dispatched should never be gated for a human either. The
-    remaining three stages reproduce the original inline gate in
-    ``stream_agent_loop`` (policy-block DENY → taint GATE → confirm-approval GATE).
+    Ordering rationale: toolcall-validation runs FIRST so a malformed or unknown
+    call is DENIED before any policy/autonomy/taint/approval stage considers it —
+    a call that cannot be dispatched should never be gated for a human either.
+    PolicyBlock (hard DENY) is next. The autonomy kill-switch follows — a no-op
+    for human-initiated calls, but for self-initiated ones it applies the hardest
+    autonomy stops (halt/breaker DENY, HITL-forever/autonomy-off GATE) before the
+    softer taint (EchoLeak) GATE and auto-confirm approval GATE.
     """
     return AdmissionPipeline(
         [
             ToolCallValidationStage(),
             PolicyBlockStage(),
+            KillSwitchStage(),
             TaintApprovalStage(),
             ConfirmApprovalStage(),
         ]

@@ -16,6 +16,7 @@ Public surface:
 """
 from __future__ import annotations
 
+from src.admission.kill_switch import KillSwitchStage
 from src.admission.pipeline import AdmissionPipeline, build_default_pipeline
 from src.admission.policy_view import ToolPolicyView
 from src.admission.stages import (
@@ -41,6 +42,7 @@ __all__ = [
     "build_default_pipeline",
     "ToolPolicyView",
     "PolicyBlockStage",
+    "KillSwitchStage",
     "TaintApprovalStage",
     "ConfirmApprovalStage",
     "ToolCallValidationStage",

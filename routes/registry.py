@@ -198,6 +198,7 @@ ROUTER_SPECS: list[RouterSpec] = [
     RouterSpec("cleanup", _simple("routes.cleanup_routes", "setup_cleanup_routes", lambda c: (c.session_manager,))),
     RouterSpec("personal", _simple("routes.personal_routes", "setup_personal_routes", lambda c: (c.personal_docs_manager, c.rag_manager, c.rag_available))),
     RouterSpec("pending", _simple("routes.pending_routes", "setup_pending_routes")),
+    RouterSpec("autonomy", _simple("routes.autonomy_routes", "setup_autonomy_routes")),
     RouterSpec("embedding", _simple("routes.embedding_routes", "setup_embedding_routes")),
     RouterSpec("model", _simple("routes.model_routes", "setup_model_routes", lambda c: (c.model_discovery,))),
     RouterSpec("copilot", _simple("routes.copilot_routes", "setup_copilot_routes")),

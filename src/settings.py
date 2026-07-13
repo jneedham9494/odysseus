@@ -37,6 +37,14 @@ DEFAULT_SETTINGS = {
     # have been observed inventing signatures and sending to real
     # recipients without confirmation.
     "agent_email_confirm": True,
+    # ── Phase-4 autonomy safety (src/autonomy_guard.py) ──
+    # Global self-initiation switch. DEFAULT OFF: nothing self-initiates unless the
+    # operator explicitly enables it. HITL-forever invariants (money/people/
+    # deletion/physical) still ALWAYS require a human even when this is on.
+    "autonomy_enabled": False,
+    # Shared secret for the headless one-tap ntfy kill-switch http action. Empty =
+    # the header-auth halt path is disabled (only an authed session can halt/resume).
+    "autonomy_kill_token": "",
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
