@@ -156,6 +156,18 @@ def _build_codex(ctx: RegistrationContext) -> APIRouter:
     )
 
 
+def _build_pwa(ctx: RegistrationContext) -> APIRouter:
+    """Serve /manifest.json and /sw.js at root scope (MR-23 PWA).
+
+    STATIC_DIR is imported lazily here (not carried on the context) to keep the
+    registry's lazy-import design intact — nothing in this module pulls the app
+    constants until registration actually runs.
+    """
+    setup = getattr(importlib.import_module("routes.pwa_routes"), "setup_pwa_routes")
+    static_dir = getattr(importlib.import_module("core.constants"), "STATIC_DIR")
+    return setup(static_dir)
+
+
 # Ordered registry. Declaration order == mount order and must be preserved:
 # the original app.py mounted these in exactly this sequence.
 ROUTER_SPECS: list[RouterSpec] = [
@@ -236,6 +248,12 @@ ROUTER_SPECS: list[RouterSpec] = [
     # must be added when this interface is enabled). Depends on the connector
     # framework (MR-2); the route fails closed with 503 until MR-2 is merged.
     RouterSpec("connector_ingest", _simple("routes.connector_routes", "setup_connector_routes")),
+    # MR-23 PWA + iOS Shortcuts. Root-scope manifest/service-worker so the SW can
+    # claim scope "/"; the capture endpoint self-gates on PWA_CAPTURE_ENABLED so
+    # it ships disabled by default. Path-distinct from every entry above, so
+    # declaration order here is not load-bearing.
+    RouterSpec("pwa", _build_pwa),
+    RouterSpec("capture", _simple("routes.capture_routes", "setup_capture_routes")),
 ]
 
 
