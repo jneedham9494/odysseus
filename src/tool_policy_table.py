@@ -109,6 +109,9 @@ _TABLE: Dict[str, ToolPolicy] = {
     # untrusted external content — the taint SOURCE, not a mutating action
     "web_fetch": _p(ToolTier.READ, "untrusted_source"),
     "web_search": _p(ToolTier.READ, "untrusted_source"),
+    # SearXNG MCP tool: read-only web results are attacker-controllable, so it
+    # is an untrusted taint source (registered by exact qualified name).
+    "mcp__searxng__web_search": _p(ToolTier.READ, "untrusted_source"),
 
     # -- local mutation (WRITE tier) --
     "write_file": _p(ToolTier.WRITE, "gated", "non_admin_blocked", "plan_mode_mutator"),

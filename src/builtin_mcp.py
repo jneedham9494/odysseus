@@ -74,6 +74,7 @@ _BUILTIN_SERVERS = {
     "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
     "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    "searxng":    ("mcp_servers/searxng_server.py",    "Built-in: SearXNG Web Search"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)
