@@ -14,6 +14,7 @@ import logging
 from typing import List, Optional, Sequence
 
 from src.admission.autonomy_stage import AutonomyStageStage
+from src.admission.guard_stage import GuardEscalationStage
 from src.admission.kill_switch import KillSwitchStage
 from src.admission.stages import (
     ConfirmApprovalStage,
@@ -74,16 +75,19 @@ class AdmissionPipeline:
 
 
 def build_default_pipeline() -> AdmissionPipeline:
-    """Default pipeline: validate → block → kill-switch → taint → confirm → autonomy.
+    """Default pipeline: validate → block → kill-switch → taint → confirm → autonomy → guard.
 
     Ordering rationale: toolcall-validation runs FIRST so a malformed or unknown
     call is DENIED before any other stage considers it. PolicyBlock (hard DENY) is
     next, then the autonomy kill-switch (a no-op for human calls; for self-initiated
     ones it applies halt/breaker DENY and HITL-forever/autonomy-off GATE). Taint
     (EchoLeak) GATE and auto-confirm approval GATE follow. The autonomy stage-machine
-    (MR-19) is registered LAST as an escalate-only guard: it only restricts
-    SELF-INITIATED calls and is a no-op ALLOW for human ones; it ships DISABLED
-    (autonomy off, Stage 0).
+    (MR-19) restricts SELF-INITIATED calls only. GuardEscalationStage (MR-20, the
+    llama-guard classifier) is registered LAST as an escalate-only defence-in-depth
+    layer: since the pipeline returns the first non-ALLOW verdict, both escalate-only
+    stages run only on calls the deterministic stages ALLOWed — they can turn a
+    would-be ALLOW into GATE but never downgrade an earlier GATE/DENY. Both ship
+    DISABLED (autonomy off / guard off).
     """
     return AdmissionPipeline(
         [
@@ -93,5 +97,6 @@ def build_default_pipeline() -> AdmissionPipeline:
             TaintApprovalStage(),
             ConfirmApprovalStage(),
             AutonomyStageStage(),
+            GuardEscalationStage(),
         ]
     )
