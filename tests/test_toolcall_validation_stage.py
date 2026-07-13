@@ -25,6 +25,10 @@ import pytest
 # ---------------------------------------------------------------------------
 # Fake registry modules — installed before src.tool_validation's lazy imports.
 # ---------------------------------------------------------------------------
+# Registry modules the fixture fakes; snapshotted so we can restore real ones.
+_FAKED_MODULES = ("src.tool_schemas", "src.agent_tools", "src.tool_execution")
+
+
 def _install_fake_registry() -> None:
     """Inject minimal fakes for the modules tool_validation imports lazily."""
     # src.tool_schemas.FUNCTION_TOOL_SCHEMAS: one schema-listed tool with a
@@ -70,7 +74,13 @@ def _install_fake_registry() -> None:
 
 @pytest.fixture()
 def validation():
-    """Import src.tool_validation against the fake registry with clean caches."""
+    """Import src.tool_validation against the fake registry with clean caches.
+
+    The fake registry is injected into ``sys.modules`` and the real entries are
+    restored on teardown, so a later real-registry test (e.g. in
+    test_admission_pipeline) is not polluted with the fakes.
+    """
+    saved = {name: sys.modules.get(name) for name in _FAKED_MODULES}
     _install_fake_registry()
     import src.tool_validation as tv
     tv._schema_cache = None
@@ -78,6 +88,11 @@ def validation():
     yield tv
     tv._schema_cache = None
     tv._executable_cache = None
+    for name, module in saved.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 # The 5 schemaless-but-executable tools that must NOT be false-denied.
@@ -136,6 +151,23 @@ def test_validate_valid_call_returns_none(validation):
 def test_validate_freeform_tool_content_returns_none(validation):
     # A freeform tool (bash) whose content is not a JSON object is never faulted.
     assert validation.validate_tool_call("bash", "ls -la /tmp") is None
+
+
+@pytest.mark.parametrize("code", [
+    "{'a': 1}",              # dict literal — not JSON (single quotes)
+    '{"a": 1}',              # looks like JSON args but is real code
+    "{x for x in range(3)}",  # set comprehension
+])
+def test_validate_python_brace_literal_not_denied(validation, code):
+    # Regression (false-deny): python block content is the raw code payload, not
+    # a JSON args map. A brace-delimited code literal must never be arg-validated.
+    assert validation.validate_tool_call("python", code) is None
+
+
+@pytest.mark.parametrize("command", ['{"foo":"bar"}', "{ echo hi; }"])
+def test_validate_bash_brace_literal_not_denied(validation, command):
+    # Regression (false-deny): bash content is the raw command, not JSON args.
+    assert validation.validate_tool_call("bash", command) is None
 
 
 @pytest.mark.parametrize("tool", SCHEMALESS_EXECUTABLE)

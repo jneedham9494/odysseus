@@ -53,6 +53,27 @@ _ELIF_ONLY_DISPATCH_TOOLS = frozenset({
     "vault_search", "vault_get", "vault_unlock",
 })
 
+# Tools whose block *content* is a raw freeform payload, NOT a JSON args object.
+# tool_schemas.function_call_to_tool_block serialises these tools' arguments into
+# plain text (e.g. python -> args["code"], bash -> args["command"], the document/
+# session/memory tools -> concatenated fields), so the content the admission
+# boundary sees is user/model code or prose, not a `{...}` args map. That payload
+# may itself be a brace-delimited literal (a Python set/dict, a JSON file body, a
+# shell heredoc), which the JSON-arg heuristic below would otherwise mis-read and
+# false-deny. These tools are therefore never arg-validated here — matching this
+# module's contract that freeform bash/python/query content is left alone. Keep
+# in sync with the raw-text branches of function_call_to_tool_block. (web_search
+# is intentionally absent: its content is either a bare query — which is not
+# brace-delimited — or a genuine `{"query", "time_filter"}` args object we DO want
+# to validate.)
+_FREEFORM_CONTENT_TOOLS = frozenset({
+    "bash", "python", "get_workspace", "read_file", "write_file",
+    "create_document", "edit_document", "suggest_document", "update_document",
+    "search_chats", "chat_with_model", "create_session", "list_sessions",
+    "send_to_session", "manage_session", "manage_memory", "list_models",
+    "ui_control", "ask_teacher",
+})
+
 _schema_cache: Optional[Dict[str, Dict[str, Any]]] = None
 _executable_cache: Optional[frozenset] = None
 
@@ -205,6 +226,11 @@ def validate_tool_call(tool_type: Optional[str], content: Optional[str]) -> Opti
         # allowlist is the full dispatchable set, not just schema-listed tools,
         # so legitimate schemaless tools (generate_image, vault_*, …) pass.
         return f"Unknown tool '{tool_type}'. It is not one of the available tools."
+
+    if canonical in _FREEFORM_CONTENT_TOOLS:
+        # Content is a raw freeform payload (code/command/prose), not a JSON args
+        # object — never arg-validate it, even if it happens to be brace-delimited.
+        return None
 
     stripped = content.strip()
     if stripped.startswith("{") and stripped.endswith("}"):
