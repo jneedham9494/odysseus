@@ -27,6 +27,7 @@ from src.embedding_lanes import (
     query_lanes,
 )
 from src.rag_types import RetrievedChunk
+from src.reranker import rerank_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +411,12 @@ class VectorRAG:
                     })
 
             candidates.sort(key=lambda c: c["similarity"], reverse=True)
+            # Cross-encoder rerank: re-order the wider bi-encoder candidate pool
+            # by joint (query, doc) relevance before taking top-k. Best-effort —
+            # falls back to the hybrid order if the reranker is off/unavailable
+            # (see src/reranker.py). Rerank BEFORE dedupe so top-k reflects the
+            # reranked order.
+            candidates = rerank_candidates(query, candidates)
             top = dedupe_results(candidates, limit=k)
             logger.info(f"Hybrid search for '{query[:60]}': {len(top)} results")
             return top
