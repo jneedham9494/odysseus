@@ -64,6 +64,10 @@ DEFAULT_SETTINGS = {
     "stt_provider": "disabled",
     "stt_model": "base",
     "stt_language": "",
+    # Voice loop (MR-21): audio-in -> STT -> agent -> streamed TTS -> audio-out.
+    # Owner-only entry point; ships DISABLED — the /api/voice/turn endpoint 404s
+    # until an operator explicitly turns this on.
+    "voice_loop_enabled": False,
     "search_provider": "searxng",
     # Default fallback chain — when the primary provider fails or
     # rate-limits, we try DuckDuckGo next. Free, no API key required, so
