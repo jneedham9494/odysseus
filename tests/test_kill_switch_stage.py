@@ -226,9 +226,12 @@ def test_default_pipeline_allows_human_call_when_halted(_clean_autonomy_state):
 
     pipeline = build_default_pipeline()
     decision = pipeline.evaluate(
-        AdmissionContext(tool_type="bash", content="ls", session_id="s1", autonomous=False)
+        AdmissionContext(tool_type="read_file", content="notes.md", session_id="s1", autonomous=False)
     )
 
-    # No autonomy restriction; falls through to the softer stages which, for a
-    # plain read-only bash call with no taint, ALLOW.
+    # No autonomy restriction for a human call, and a genuinely read-only tool is
+    # not held by the confirm gate regardless of the agent_tool_confirm setting,
+    # so the call falls through the softer stages to ALLOW. (Uses read_file, not a
+    # write-tier tool like bash, so the assertion can't be perturbed by confirm
+    # state leaking in from another test.)
     assert decision.verdict is Verdict.ALLOW

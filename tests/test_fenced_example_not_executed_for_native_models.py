@@ -50,6 +50,12 @@ def _patch_common(monkeypatch, exec_calls):
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    # This suite verifies only that a real (non-illustrative) tool call is PARSED
+    # and routed to execution. The approval gate is a separate concern with its own
+    # suites; disable the confirm gate here so a write-tier tool like ``bash`` is
+    # not held for approval instead of reaching execute_tool_block.
+    import src.pending_actions as _pa
+    monkeypatch.setattr(_pa, "confirm_enabled", lambda: False, raising=False)
 
     async def _fake_exec(block, *a, **k):
         exec_calls.append(block)
