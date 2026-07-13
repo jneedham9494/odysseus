@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""openclaw eval gate — run the golden set against an OpenAI-compatible endpoint,
+"""Argos eval gate — run the golden set against an OpenAI-compatible endpoint,
 score deterministically (+ LLM-judge for open-ended), and exit non-zero if the
 overall pass-rate is below threshold. Stdlib only.
 
@@ -89,7 +89,7 @@ def check_one(c, reply, tool_calls, case):
 def main():
     if not KEY:
         print("ERROR: EVAL_API_KEY not set", file=sys.stderr); return 2
-    print(f"== openclaw eval :: model={MODEL} :: {len(CASES)} cases :: threshold={THRESH:.0%} ==\n")
+    print(f"== Argos eval :: model={MODEL} :: {len(CASES)} cases :: threshold={THRESH:.0%} ==\n")
     results = []
     for case in CASES:
         msgs = []

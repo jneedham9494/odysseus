@@ -1,4 +1,4 @@
-"""openclaw eval golden set — task-representative prompts + deterministic checks.
+"""Argos eval golden set — task-representative prompts + deterministic checks.
 
 Each case: id, category, prompt, optional `tools` (OpenAI function schema) and
 `system`; `checks` is a list of assertions evaluated against the model's reply.

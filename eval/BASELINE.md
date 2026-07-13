@@ -1,6 +1,6 @@
 # Eval baselines
 
-Reference pass-rates for the openclaw golden set (`eval/golden_set.py`, 21 cases).
+Reference pass-rates for the Argos golden set (`eval/golden_set.py`, 21 cases).
 Re-run with `bash eval/run.sh` (see `eval/README.md`). Config: `temperature=0`,
 `max_tokens=2048`, `EVAL_THRESHOLD=0.80`, LiteLLM router `:4000`.
 

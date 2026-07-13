@@ -1,6 +1,7 @@
 # odysseus-mine — CLAUDE.md
 
-> **Jack's private fork of Odysseus** = the **"openclaw"** personal AI assistant. The
+> **Jack's private fork of Odysseus** = **"Argos"**, the personal AI assistant (named for
+> Odysseus's faithful hound). NOTE: modeled on — but NOT using — the OpenClaw product. The
 > `README.md` here is upstream Odysseus's — *this* file is the fork's reality. For the broader
 > odin/homelab context, read **`/mnt/fast/home/Projects/homelab/CLAUDE.md`** first.
 
