@@ -228,6 +228,17 @@ def _resolve_task_timezone(db, task) -> str | None:
     return None
 
 
+# User-message instruction for the seeded daily-briefing LLM task. The richer
+# system prompt (DAILY_BRIEFING_SYSTEM_PROMPT) is applied in _execute_llm_task;
+# the deterministic pre-gathered context draft is prepended there too.
+DAILY_BRIEFING_TASK_PROMPT = (
+    "Compose and deliver today's morning briefing. Use the pre-gathered calendar "
+    "and task context above as your base, fold in the latest RSS/feed items if a "
+    "feed integration is configured, deliver via ntfy, and store any durable new "
+    "facts with manage_memory."
+)
+
+
 # Built-in "housekeeping" tasks seeded for every owner, keyed by action.
 # These are the canonical defaults — used both to seed and to revert a
 # built-in task the user has altered. schedule "daily" uses scheduled_time;
@@ -243,6 +254,12 @@ HOUSEKEEPING_DEFAULTS = {
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
+    # LLM-powered morning briefing. task_type "llm" (runs stream_agent_loop with
+    # the briefing system prompt) rather than a hardcoded action. Ships PAUSED so
+    # it never auto-fires until the user deliberately enables it. Delivery is
+    # session (output_target) + ntfy (agent calls the ntfy integration); durable
+    # facts are written back via manage_memory, which fires memory_added.
+    "daily_briefing":        {"name": "Daily Briefing",           "task_type": "llm", "prompt": DAILY_BRIEFING_TASK_PROMPT, "schedule": "cron", "scheduled_time": None, "cron_expression": "30 6 * * *", "ship_paused": True, "output_target": "session", "legacy_names": []},
 }
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
@@ -1326,6 +1343,56 @@ class TaskScheduler:
             override_user_message=context,
         )
 
+    async def _execute_daily_briefing(self, task, db, session_id, endpoint_url, model) -> str:
+        """Run the seeded daily-briefing LLM task via the agent loop.
+
+        Gathers calendar/tasks context deterministically, renders a bounded
+        draft, and injects it under the briefing system prompt so the agent can
+        enrich (feeds), deliver (ntfy + session), and write facts to memory.
+        """
+        from src.briefing_composer import (
+            DAILY_BRIEFING_SYSTEM_PROMPT,
+            compose_briefing,
+            gather_briefing_context,
+        )
+
+        tz_name = _resolve_task_timezone(db, task)
+        try:
+            if tz_name:
+                from zoneinfo import ZoneInfo
+                now_local = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+                time_str = now_local.strftime("%A, %B %d %Y, %H:%M %Z")
+            else:
+                time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
+        except Exception:
+            time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
+
+        system_prompt = f"Current time: {time_str}\n\n{DAILY_BRIEFING_SYSTEM_PROMPT}"
+
+        try:
+            context = gather_briefing_context(task.owner, db)
+            draft = compose_briefing(context)
+        except Exception as e:
+            logger.warning(f"[briefing] context gather failed for {task.owner}: {e}")
+            draft = "(no pre-gathered context available)"
+
+        user_message = (
+            f"Pre-gathered context (calendar + tasks):\n\n{draft}\n\n---\n\n"
+            f"{task.prompt or DAILY_BRIEFING_TASK_PROMPT}"
+        )
+
+        result = await self._run_agent_loop(
+            endpoint_url, model, task, session_id,
+            system_prompt=system_prompt, disabled_tools=None, relevant_tools=None,
+            override_user_message=user_message,
+        )
+        try:
+            from src.text_helpers import strip_think
+            result = strip_think(result or "", prose=True, prompt_echo=True).strip() or result
+        except Exception:
+            pass
+        return result
+
     async def _execute_llm_task(self, task, db) -> str:
         """Execute an LLM task with full tool access via the agent loop."""
         from core.database import Session as DbSession, ChatMessage, CrewMember
@@ -1385,6 +1452,14 @@ class TaskScheduler:
         is_checkin = crew and crew.is_default_assistant and "check-in" in (task.name or "").lower()
         if is_checkin:
             return await self._execute_checkin(task, crew, db, session_id, endpoint_url, model)
+
+        # Seeded daily-briefing task: gather calendar/tasks deterministically,
+        # render a bounded draft, and hand it to the agent under the briefing
+        # system prompt to enrich (feeds), deliver (ntfy), and mine for memory.
+        if (getattr(task, "action", "") or "") == "daily_briefing":
+            return await self._execute_daily_briefing(
+                task, db, session_id, endpoint_url, model
+            )
 
         # Build system prompt: crew member persona overrides the default.
         # Built-in character_id (Socrates, Razor, etc.) further biases the
@@ -2072,7 +2147,9 @@ class TaskScheduler:
                 action = name_to_action.get(task.name)
                 if not action:
                     continue
-                task.task_type = "action"
+                # Preserve the def's declared type — most built-ins are "action",
+                # but daily_briefing is an "llm" task and must not be flipped.
+                task.task_type = HOUSEKEEPING_DEFAULTS[action].get("task_type", "action")
                 task.action = action
 
             from core.database import TaskRun
@@ -2099,16 +2176,18 @@ class TaskScheduler:
                     db.query(TaskRun).filter(~TaskRun.task_id.in_(list(live_ids))).delete(synchronize_session=False)
             except Exception:
                 pass
+            # Match built-ins by their action key regardless of task_type so the
+            # llm-typed daily_briefing is deduped/normalized like the rest and is
+            # not re-seeded on every pass.
             existing_actions = {
                 row[0] for row in db.query(ScheduledTask.action).filter(
                     ScheduledTask.owner == owner,
-                    ScheduledTask.task_type == "action",
+                    ScheduledTask.action.in_(list(HOUSEKEEPING_DEFAULTS.keys())),
                 ).all() if row[0]
             }
             renamed = []
             builtin_tasks = db.query(ScheduledTask).filter(
                 ScheduledTask.owner == owner,
-                ScheduledTask.task_type == "action",
                 ScheduledTask.action.in_(list(HOUSEKEEPING_DEFAULTS.keys())),
             ).all()
             by_action = {}
@@ -2218,8 +2297,9 @@ class TaskScheduler:
                     id=str(uuid.uuid4())[:8],
                     owner=owner,
                     name=defs["name"],
-                    task_type="action",
+                    task_type=defs.get("task_type", "action"),
                     action=action,
+                    prompt=defs.get("prompt"),
                     trigger_type=trigger_type,
                     trigger_event=defs.get("trigger_event"),
                     trigger_count=defs.get("trigger_count"),
