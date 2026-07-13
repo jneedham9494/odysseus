@@ -22,27 +22,21 @@ from typing import Any, Dict, List, Optional
 
 from src.constants import DATA_DIR
 from src.settings import get_setting
+from src.tool_security import (
+    TIER_HITL,
+    TIER_WRITE,
+    actuator_tier,
+)
 
 logger = logging.getLogger(__name__)
 
 PENDING_DB = os.path.join(DATA_DIR, "pending_actions.db")
 
-# External / world-changing tools worth gating behind human approval.
-# (send_email/reply_to_email/bulk_email already have their own confirm via the
-# agent_email_confirm setting, so they're intentionally omitted here.)
-DEFAULT_GATED_TOOLS = {
-    "manage_calendar", "manage_contact",
-    "ui_control",
-    "write_file", "edit_file", "bash", "python",
-    "generate_image", "edit_image",
-}
-# api_call / app_api are gated ONLY for write methods — read-only GET/HEAD calls
-# (e.g. "is anyone home?", "what's my UPS load?") run freely so the gate isn't noisy.
-_METHOD_AWARE_TOOLS = {"api_call", "app_api"}
+# Which actuators gate, and why, now lives in ONE policy table:
+# ``src/tool_security.py`` (actuator_tier + the tier sets). This module consumes
+# that table via ``requires_approval`` / ``is_mutating_tool`` below.
+
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-# MCP tool-name prefixes to gate (browser-automation tools register as e.g.
-# "browser_navigate", "browser_click").
-GATED_MCP_PREFIXES = ("browser_", "playwright_")
 
 
 def _is_write_api_call(content: Optional[str]) -> bool:
@@ -105,38 +99,36 @@ def confirm_enabled() -> bool:
     return bool(get_setting("agent_tool_confirm", False))
 
 
-def _gated_tools() -> set:
+def _extra_gated_tools() -> set:
+    """Operator-configured extra tools to force through approval, from the
+    ``agent_tool_confirm_tools`` setting. Lets an operator gate even a read/draft
+    tool they consider sensitive; write/hitl tiers gate on their own."""
     extra = get_setting("agent_tool_confirm_tools", None)
     if isinstance(extra, str):
-        extra = {t.strip() for t in extra.split(",") if t.strip()}
-    elif isinstance(extra, (list, set, tuple)):
-        extra = {str(t).strip() for t in extra if str(t).strip()}
-    else:
-        extra = set()
-    return DEFAULT_GATED_TOOLS | extra
+        return {t.strip() for t in extra.split(",") if t.strip()}
+    if isinstance(extra, (list, set, tuple)):
+        return {str(t).strip() for t in extra if str(t).strip()}
+    return set()
 
 
 def requires_approval(tool_type: Optional[str], content: Optional[str] = None) -> bool:
     """True if this tool must be queued for human approval before running.
 
-    Reads run freely; only mutating actions are gated. For api_call/app_api the
-    HTTP method decides (GET/HEAD pass, POST/PUT/PATCH/DELETE gate)."""
-    if not tool_type or not confirm_enabled():
+    Tier-aware (MR-16, see ``src/tool_security.actuator_tier``):
+      - hitl-forever (money / people / deletion / physical) ALWAYS gates, even
+        with ``agent_tool_confirm`` off - it can never be auto-delegated.
+      - write-gated gates only when the operator enabled ``agent_tool_confirm``.
+      - read / draft run freely, unless the operator explicitly listed the tool
+        in ``agent_tool_confirm_tools``.
+    """
+    if not tool_type:
         return False
-    if tool_type in _METHOD_AWARE_TOOLS:
-        return _is_write_api_call(content)
-    if tool_type in _gated_tools():
+    tier = actuator_tier(tool_type, content)
+    if tier == TIER_HITL:
         return True
-    return any(tool_type.startswith(p) for p in GATED_MCP_PREFIXES)
-
-
-# High-risk real-world mutators that have their own confirm path in normal
-# operation (e.g. send_email via agent_email_confirm) but MUST also be caught by
-# the fail-closed net if the normal policy can't be evaluated. Listed here, not
-# in DEFAULT_GATED_TOOLS, so normal-operation behaviour is unchanged.
-_FAILCLOSED_EXTRA_MUTATORS = {
-    "send_email", "reply_to_email", "bulk_email", "delete_file", "move_file",
-}
+    if tier == TIER_WRITE:
+        return confirm_enabled()
+    return confirm_enabled() and tool_type in _extra_gated_tools()
 
 
 def is_mutating_tool(tool_type: Optional[str], content: Optional[str] = None) -> bool:
@@ -144,16 +136,13 @@ def is_mutating_tool(tool_type: Optional[str], content: Optional[str] = None) ->
 
     Used by the fail-closed approval path: when the full ``requires_approval``
     policy can't be evaluated (e.g. a settings/DB read raised), this decides
-    whether to gate. It reads only module constants so it cannot itself fail.
-    Unknown tool types are treated as mutating (safe default).
+    whether to gate. It reads only module constants (via ``actuator_tier``) so it
+    cannot itself fail. A tool mutates if its tier is write-gated or hitl-forever;
+    unknown tool types fall through to write-gated, so they count as mutating.
     """
     if not tool_type:
         return True
-    if tool_type in _METHOD_AWARE_TOOLS:
-        return _is_write_api_call(content)
-    if tool_type in DEFAULT_GATED_TOOLS or tool_type in _FAILCLOSED_EXTRA_MUTATORS:
-        return True
-    return any(tool_type.startswith(p) for p in GATED_MCP_PREFIXES)
+    return actuator_tier(tool_type, content) in (TIER_WRITE, TIER_HITL)
 
 
 def _summarize(tool_type: str, content: str) -> str:

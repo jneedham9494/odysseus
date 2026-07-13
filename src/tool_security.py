@@ -5,6 +5,21 @@ from __future__ import annotations
 import logging
 from typing import Optional, Set
 
+# Actuator tiering (MR-16) is the security-policy classification of every tool's
+# autonomy; it lives in a focused module and is re-exported here so callers keep
+# using the security surface: ``from src.tool_security import actuator_tier``.
+from src.actuator_tiers import (  # noqa: F401
+    DRAFT_TOOLS,
+    HITL_FOREVER_TOOLS,
+    READ_TOOLS,
+    TIER_DRAFT,
+    TIER_HITL,
+    TIER_READ,
+    TIER_WRITE,
+    WRITE_GATED_TOOLS,
+    actuator_tier,
+)
+
 logger = logging.getLogger(__name__)
 
 
