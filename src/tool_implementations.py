@@ -1351,23 +1351,18 @@ async def do_api_call(content: str) -> Dict:
     so the model never touches a secret and off-policy destinations are refused
     before any credential is attached.
     """
+    from src.api_call_parse import parse_api_call_content
     from src.credential_broker import BrokerRequest, broker_api_call
     from src.integrations import load_integrations
-    try:
-        args = json.loads(content)
-    except json.JSONDecodeError:
-        # Try line-based format: integration\nmethod path\nbody
-        lines = content.strip().split("\n")
-        args = {"integration": lines[0].strip() if lines else ""}
-        if len(lines) > 1:
-            parts = lines[1].strip().split(" ", 1)
-            args["method"] = parts[0] if parts else "GET"
-            args["path"] = parts[1] if len(parts) > 1 else "/"
-        if len(lines) > 2:
-            try:
-                args["body"] = json.loads("\n".join(lines[2:]))
-            except json.JSONDecodeError:
-                pass
+
+    # Parse via the shared parser (JSON, then line-based fallback) so the tier
+    # classifier (actuator_tier -> approval gate) sees the EXACT same request this
+    # executor will run - otherwise a content form one honours and the other
+    # ignores becomes an approval bypass.
+    args = parse_api_call_content(content)
+    if not isinstance(args, dict):
+        return {"error": "api_call content must be a JSON object or the line-based "
+                         "'integration\\nMETHOD path\\nbody' form", "exit_code": 1}
 
     integration_name = args.get("integration", "")
     # Keep the friendly "unknown integration" message the agent relies on; the

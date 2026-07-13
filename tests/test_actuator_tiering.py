@@ -90,6 +90,53 @@ def test_api_call_money_read_is_not_hitl():
     assert actuator_tier("api_call", _api("GET", "/firefly/accounts")) == TIER_READ
 
 
+# --- parser/executor parity: no content-form or method bypass --------------
+# Regression for MR-16 money-gate bypasses: the tier classifier must parse an
+# api_call the same way the executor (do_api_call) does, or a form the executor
+# runs but the classifier ignores dodges the money gate.
+
+def test_api_call_line_based_money_form_is_hitl():
+    # The line-based "integration\nMETHOD path\nbody" form the executor honours
+    # must be classified like the equivalent JSON form: money -> hitl-forever,
+    # never merely write-gated (which would auto-run with confirm off).
+    line_form = "firefly\nPOST /api/v1/transactions\n{\"amount\": \"9999\"}"
+    assert actuator_tier("api_call", line_form) == TIER_HITL
+    assert actuator_tier("app_api", "stripe\nPOST /v1/charges\n{}") == TIER_HITL
+
+
+def test_api_call_line_based_write_form_is_write_gated():
+    # A non-money write in the line-based form still gates as a write.
+    assert actuator_tier("api_call", "gitea\nPOST /repos\n{}") == TIER_WRITE
+
+
+def test_api_call_line_based_read_form_is_read():
+    assert actuator_tier("api_call", "miniflux\nGET /v1/entries") == TIER_READ
+
+
+@pytest.mark.parametrize("method", ["POST ", "\tPOST", " post ", "PoSt\n"])
+def test_api_call_whitespace_method_still_write(method):
+    # Method with surrounding whitespace/case must NOT be classified read: the
+    # executor's method.upper() forwards it to httpx as a write.
+    assert actuator_tier("api_call", _api(method)) == TIER_WRITE
+
+
+@pytest.mark.parametrize("method", ["POST ", "\tPOST"])
+def test_api_call_whitespace_method_money_is_hitl(method):
+    assert actuator_tier("api_call", _api(method, "/firefly/transactions")) == TIER_HITL
+
+
+@pytest.mark.parametrize("method", [["POST"], {"m": "POST"}, 123, True])
+def test_api_call_non_string_method_fails_closed(method):
+    # A non-string method the executor cannot run cleanly must fail closed (gated),
+    # never read.
+    content = json.dumps({"method": method, "path": "/x"})
+    assert actuator_tier("api_call", content) == TIER_WRITE
+
+
+def test_api_call_line_based_delete_is_hitl():
+    assert actuator_tier("api_call", "gitea\nDELETE /repos/x") == TIER_HITL
+
+
 # --- fail-closed on unknown / malformed ------------------------------------
 
 @pytest.mark.parametrize("tool", ["totally_unknown_tool", "some_new_actuator", "x"])
@@ -103,10 +150,23 @@ def test_actuator_tier_malformed_fails_closed():
     assert actuator_tier(123) == TIER_WRITE  # type: ignore[arg-type]
 
 
-def test_api_call_unparseable_content_fails_closed():
-    assert actuator_tier("api_call", "not json") == TIER_WRITE
+def test_api_call_unrunnable_content_fails_closed():
+    # Payloads the executor cannot turn into a request fail closed to write-gated:
+    # empty/None (no request) and non-object JSON (do_api_call errors on it).
     assert actuator_tier("api_call", None) == TIER_WRITE
+    assert actuator_tier("api_call", "") == TIER_WRITE
     assert actuator_tier("api_call", json.dumps([1, 2])) == TIER_WRITE
+    assert actuator_tier("api_call", json.dumps("just a string")) == TIER_WRITE
+
+
+def test_api_call_bare_non_json_blob_is_read_parity():
+    # A bare non-JSON string parses (line-based) as a GET to that integration -
+    # exactly what the executor do_api_call does, which issues a GET (a read) or
+    # errors on an unknown integration. It can never become a write, so read is
+    # the parity-correct, safe tier. Line-based content WITH a write verb gates
+    # (see the line-based write/money/delete tests above).
+    assert actuator_tier("api_call", "not json") == TIER_READ
+    assert actuator_tier("api_call", "miniflux") == TIER_READ
 
 
 # --- requires_approval: read auto-runs, write gates ------------------------

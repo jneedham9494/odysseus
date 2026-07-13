@@ -21,10 +21,10 @@ approval queue.
 """
 from __future__ import annotations
 
-import json
 from typing import Dict, FrozenSet, Optional
 
 from src import tool_policy_table
+from src.api_call_parse import parse_api_call_content
 
 TIER_READ = "read"
 TIER_DRAFT = "draft"
@@ -129,19 +129,34 @@ _MONEY_MARKERS = (
 
 def _api_call_tier(content: Optional[str]) -> str:
     """Tier an api_call / app_api by HTTP verb and target. Fail-closed: an
-    unparseable or non-object payload is treated as a gated write."""
-    if not content:
-        return TIER_WRITE
-    try:
-        args = json.loads(content)
-    except (ValueError, TypeError):
-        return TIER_WRITE
+    unparseable or non-object payload is treated as a gated write.
+
+    Parses via ``parse_api_call_content`` - the SAME parser the executor
+    (``do_api_call``) uses - so the classifier and executor never disagree on
+    what the request is. In particular this covers the line-based
+    ``integration\\nMETHOD path\\nbody`` form the executor honours: without it, a
+    money-moving write in that form parsed as unparseable here and only
+    write-gated (auto-runnable) while the executor still ran it.
+    """
+    args = parse_api_call_content(content)
     if not isinstance(args, dict):
+        # empty / unparseable / non-object payload -> fail closed
         return TIER_WRITE
-    method = str(args.get("method") or "GET").upper()
+    method_raw = args.get("method")
+    if isinstance(method_raw, str):
+        # Normalize like the executor's method.upper(), but ALSO strip surrounding
+        # whitespace so "POST " / "\tPOST" cannot dodge the write-method set while
+        # the executor forwards the same verb to httpx.
+        method = method_raw.strip().upper() or "GET"
+    elif method_raw is None:
+        method = "GET"
+    else:
+        # Non-string method (e.g. a list): the executor cannot run it cleanly and
+        # the classifier cannot trust it - fail closed to a gated write.
+        return TIER_WRITE
     if method not in _WRITE_HTTP_METHODS:
         return TIER_READ  # GET / HEAD / etc. - read-only integration call
-    blob = content.lower()
+    blob = (content or "").lower()
     if any(marker in blob for marker in _MONEY_MARKERS):
         return TIER_HITL  # money movement
     if method == "DELETE":

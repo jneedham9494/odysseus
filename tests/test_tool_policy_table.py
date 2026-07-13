@@ -160,8 +160,16 @@ def test_method_aware_api_call_respects_http_method():
     import json
     assert pa.is_mutating_tool("api_call", json.dumps({"method": "GET"})) is False
     assert pa.is_mutating_tool("api_call", json.dumps({"method": "POST"})) is True
-    # Unparseable content -> write (fail closed), unchanged.
-    assert pa.is_mutating_tool("app_api", "not-json") is True
+    # Line-based content is parsed exactly like the executor (do_api_call): a
+    # write verb -> mutating; a money/DELETE write escalates to hitl-forever (both
+    # still mutating here). A bare single-line blob is a GET (read) -> not mutating,
+    # matching what the executor would run.
+    assert pa.is_mutating_tool("app_api", "gitea\nPOST /repos\n{}") is True
+    assert pa.is_mutating_tool("app_api", "firefly\nPOST /api/v1/transactions") is True
+    assert pa.is_mutating_tool("app_api", "gitea\nDELETE /repos/x") is True
+    assert pa.is_mutating_tool("app_api", "miniflux\nGET /v1/entries") is False
+    # Non-object JSON the executor errors on -> fail closed (mutating).
+    assert pa.is_mutating_tool("app_api", json.dumps([1, 2])) is True
 
 
 def test_browser_prefix_gated_untrusted_and_credentialed():
