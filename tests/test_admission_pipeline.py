@@ -232,4 +232,5 @@ def test_default_pipeline_stage_order():
         "context_taint",
         "pending_actions",
         "autonomy_stage",
+        "llama_guard",
     ]
