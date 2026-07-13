@@ -156,8 +156,30 @@ class McpManager:
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         url: Optional[str] = None,
+        admin_approved: bool = False,
     ) -> bool:
-        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
+        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport.
+
+        Registry hygiene (MR-13): before any subprocess is spawned or socket
+        opened, the server_id is checked against the curated allowlist
+        (src/mcp_allowlist.py). Auto-wired built-ins must be allowlisted;
+        archived ids are refused unconditionally; unknown ids are refused unless
+        the caller sets ``admin_approved=True`` (an explicit operator action).
+        This gate only ever REFUSES -- it never widens what can run.
+        """
+        from src.mcp_allowlist import check_registration
+
+        allowed, reason = check_registration(server_id, admin_approved=admin_approved)
+        if not allowed:
+            logger.warning(f"MCP registration blocked for {name} ({server_id}): {reason}")
+            self._connections[server_id] = {
+                "status": "refused",
+                "error": reason,
+                "name": name,
+            }
+            self._generation += 1
+            return False
+
         try:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
@@ -427,6 +449,9 @@ class McpManager:
                     args=args,
                     env=env,
                     url=srv.url,
+                    # DB rows are servers an admin previously added through the
+                    # gated routes/tool, so they carry standing admin approval.
+                    admin_approved=True,
                 )
         finally:
             db.close()

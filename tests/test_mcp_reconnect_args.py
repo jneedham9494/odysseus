@@ -43,4 +43,5 @@ def test_reconnect_passes_full_server_config():
         args=["--flag"],
         env={"KEY": "val"},
         url=None,
+        admin_approved=True,  # MR-13: admin-gated manage_mcp reconnect
     )

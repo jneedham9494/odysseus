@@ -853,6 +853,9 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
                     sid, name, "stdio", command=command,
                     args=cmd_args if isinstance(cmd_args, list) else json.loads(cmd_args),
                     env=env if isinstance(env, dict) else json.loads(env),
+                    # Reached only via the admin-gated manage_mcp tool after
+                    # _validate_mcp_command; an explicit operator registration.
+                    admin_approved=True,
                 )
                 st = mcp.get_server_status(sid)
                 tool_count = st.get("tool_count", 0)
@@ -903,6 +906,8 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
                         args=_args,
                         env=_env,
                         url=srv.url,
+                        # Admin-gated manage_mcp reconnect of a stored server.
+                        admin_approved=True,
                     )
                     st = mcp.get_server_status(sid)
                     return {"response": f"Reconnected '{srv.name}' ({st.get('tool_count', 0)} tools)", "exit_code": 0}
