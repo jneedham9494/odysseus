@@ -17,15 +17,19 @@ from __future__ import annotations
 
 from typing import Optional
 
+from src import tool_policy_table
+
 _TAINTED_SESSIONS: set[str] = set()
 
+# All tier/mutator classification below is DERIVED from the single source of
+# truth in src.tool_policy_table (see that module's ``_TABLE`` / ``_PATTERN_TABLE``).
 # Tools whose output is attacker-controllable external content.
-_UNTRUSTED_SOURCE_TOOLS = {"web_fetch", "web_search"}
-_UNTRUSTED_PREFIXES = ("browser_", "playwright_")
+_UNTRUSTED_SOURCE_TOOLS = tool_policy_table.UNTRUSTED_SOURCE_TOOLS
+_UNTRUSTED_PREFIXES = tool_policy_table.UNTRUSTED_PREFIXES
 
 # Real-world credentialed mutators that must not auto-fire in a tainted context.
-_CREDENTIALED_MUTATORS = {"send_email", "reply_to_email", "bulk_email"}
-_METHOD_AWARE = {"api_call", "app_api"}
+_CREDENTIALED_MUTATORS = tool_policy_table.CREDENTIALED_MUTATORS
+_METHOD_AWARE = tool_policy_table.METHOD_AWARE_TOOLS
 
 
 def mark_tainted(session_id: Optional[str]) -> None:
