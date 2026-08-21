@@ -1413,6 +1413,10 @@ class TaskScheduler:
             endpoint_url = endpoint_url or crew.endpoint_url
             model = model or crew.model
         if not endpoint_url or not model:
+            s_url, s_model = self._resolve_from_settings(task.owner)
+            endpoint_url = endpoint_url or s_url
+            model = model or s_model
+        if not endpoint_url or not model:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured")
@@ -1601,6 +1605,10 @@ class TaskScheduler:
         if (not endpoint_url or not model_name) and crew:
             endpoint_url = endpoint_url or crew.endpoint_url
             model_name = model_name or crew.model
+        if not endpoint_url or not model_name:
+            s_url, s_model = self._resolve_from_settings(task.owner)
+            endpoint_url = endpoint_url or s_url
+            model_name = model_name or s_model
         if not endpoint_url or not model_name:
             try:
                 resolved_url, resolved_model = self._resolve_defaults(db, task.owner)
@@ -2002,6 +2010,24 @@ class TaskScheduler:
                 return False
             current = task.then_task_id
         return True  # too deep, treat as cycle
+
+    def _resolve_from_settings(self, owner):
+        """Background-task endpoint/model from admin settings (task_* -> utility_*).
+
+        The scheduler is the only consumer of background AI that never consulted
+        these settings: it went straight from task/crew overrides to
+        ``_resolve_defaults``, which inherits whatever model a human last chatted
+        with. That silently pointed unattended runs at an interactive choice -
+        e.g. a 66GB model picked for one conversation then used by every
+        scheduled run afterwards. Returns (None, None) if unconfigured, leaving
+        the existing fallback chain intact.
+        """
+        try:
+            from src.task_endpoint import resolve_task_endpoint
+            url, model, _ = resolve_task_endpoint(owner=owner or None)
+            return url, model
+        except Exception:
+            return None, None
 
     def _resolve_defaults(self, db, owner):
         """Find the first available endpoint + model from an existing session."""
