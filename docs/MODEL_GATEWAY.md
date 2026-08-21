@@ -71,30 +71,58 @@ SHA-256 hash and will 401.
 
 ## Two things the environment does NOT bound
 
-Routing through the gateway constrains VRAM per load. It does **not** by itself
-constrain *which* model gets loaded. As of 2026-08-21 both of these were open:
+Routing through the gateway constrains VRAM per load. It does **not** constrain
+*which* model gets loaded.
 
-1. **`ASSISTANT_LITELLM_KEY` is unrestricted** — it lists 17 models including
-   `qwen3-next:80b`, `gpt-oss:120b` and `llama4:scout`. `LITELLM_AGENTS_KEY`
-   lists 13 and 403s on those three.
+**1. `ASSISTANT_LITELLM_KEY` is unrestricted** — it lists 17 models including
+`qwen3-next:80b`, `gpt-oss:120b` and `llama4:scout`. `LITELLM_AGENTS_KEY` lists
+13 and 403s on those three.
 
-2. **The auto-pick selects the largest model.** With `default_model`,
-   `task_model`, `teacher_model` and `default_endpoint_id` all empty and no
-   `hidden_models` on the endpoint, `resolve_endpoint()` falls through to
-   `_first_chat_model(_endpoint_enabled_models(ep))`, which returns the first
-   entry of the endpoint's cached list in gateway order. Today that is
-   **`qwen3-next:80b`** — the 66GB model. Any unconfigured or background task
-   resolves to it.
+**2. Unattended work inherits the last interactive model.** There are 12
+`scheduled_tasks` rows (Email AI Auto Reply, Memory Tidy, Calendar Classify,
+Skills Audit, …), all with `model = NULL`, so every one resolves its model at
+run time.
 
-Interactive use of the big models may well be intended — this is a personal
-assistant. The risk is **unattended** work. Mitigations, cheapest first:
+With `utility_endpoint_id` / `default_endpoint_id` empty, `resolve_endpoint()`
+returns `(None, None, None)` for **every** prefix — it needs a non-empty
+`{prefix}_endpoint_id` before it will query the endpoint table at all. Callers
+then fall through to their own defaults, and
+`task_scheduler._resolve_defaults()` takes **the model from the most recent
+session** — i.e. whatever a human last chatted with. That is currently
+`qwen3-next:80b`, the 66GB model.
 
-- Set `task_model` (and `default_model`) to a single-GPU model in Settings, so
-  background work never falls through to the auto-pick.
-- Hide `qwen3-next:80b`, `gpt-oss:120b`, `llama4:scout` on the endpoint if they
-  should not be reachable unattended; the picker skips hidden models.
-- Restrict `ASSISTANT_LITELLM_KEY` at the gateway. Only odysseus uses it, so
-  this affects nothing else.
+Note the `_first_chat_model()` auto-pick (first cached model in gateway order,
+also `qwen3-next:80b`) is **not** reachable today for the same reason: nothing
+gets as far as the DB query. It arms itself the moment anyone sets a default
+endpoint in Settings without also setting a utility model.
+
+### The fix: set the utility pair
+
+`utility_endpoint_id` **and** `utility_model` must both be set. Either alone is
+a no-op, verified by simulation against the live resolver:
+
+| Settings | utility | task | research | teacher |
+| --- | --- | --- | --- | --- |
+| `task_model` only | None | None | None | None |
+| `utility_model` only | None | None | None | None |
+| **`utility_model` + `utility_endpoint_id`** | `gpt-oss:20b` | `gpt-oss:20b` | `gpt-oss:20b` | `gpt-oss:20b` |
+
+`utility` is the right lever, not `task`: most unattended callers ask for
+`utility` directly (`email_pollers`, `builtin_actions`, `context_compactor`,
+`note_routes`, `session_routes`, `task_routes`), and every other prefix —
+`task`, `research`, `teacher` — falls back to it, because `resolve_endpoint()`
+redirects any prefix outside `("utility", "default")` to the utility settings.
+
+Crucially `default` does **not** fall back to utility, so interactive chat keeps
+resolving from the session's own model. Bounding unattended work this way costs
+no interactive capability, which is why it is preferred over restricting
+`ASSISTANT_LITELLM_KEY` or hiding models on the endpoint — both of which would.
+
+Recommended values (`gpt-oss:20b` is single-GPU and already resident at 15.9GB,
+so selecting it triggers no cold load):
+
+    utility_endpoint_id = 2ad9dac1b66e4d1699cd325ba20ef484   # LiteLLM (traced)
+    utility_model       = gpt-oss:20b
 
 ## The credential in the database
 
