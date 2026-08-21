@@ -29,6 +29,10 @@ services:
       # the gateway pins num_ctx per model so a cold load cannot claim the
       # full context window (and with it every GPU on the box).
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://litellm:4000/v1}
+      # Key for the gateway above. Model discovery sends it ONLY to the host
+      # named by OLLAMA_BASE_URL, never to scan-discovered hosts. Without it
+      # the gateway answers 401 and discovery reports no models (logged).
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}

@@ -10,6 +10,21 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+# Env vars holding the API key for an authenticated model gateway (e.g. LiteLLM).
+# The key is sent ONLY to the endpoint named by OLLAMA_BASE_URL / OLLAMA_URL /
+# LM_STUDIO_URL - never to hosts turned up by the Tailscale/port scan, which
+# would broadcast the credential to whatever happens to answer on the LAN.
+_GATEWAY_KEY_ENVS = ("LITELLM_API_KEY", "MODEL_GATEWAY_API_KEY")
+
+
+def _gateway_api_key() -> str:
+    for name in _GATEWAY_KEY_ENVS:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 # Cache for discovered hosts
 _hosts_cache: List[str] = []
 _hosts_cache_time: float = 0
@@ -94,10 +109,13 @@ class ModelDiscovery:
         self.openai_compat_path = "/v1/chat/completions"
         # Custom ports from env vars, merged into the scan list by discover_models.
         self._extra_ports: set = set()
+        # (host, port) pairs from env config that may receive the gateway key.
+        self._auth_targets: set = set()
 
     def _get_hosts(self) -> List[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
         self._extra_ports = set()
+        self._auth_targets = set()
 
         def _append_host(out: List[str], host: str) -> None:
             host = (host or "").strip()
@@ -116,6 +134,8 @@ class ModelDiscovery:
                     _append_host(out, parsed.hostname or "")
                     if parsed.port:
                         self._extra_ports.add(parsed.port)
+                    if parsed.hostname and parsed.port:
+                        self._auth_targets.add((parsed.hostname, parsed.port))
                 except Exception:
                     pass
 
@@ -168,9 +188,26 @@ class ModelDiscovery:
     def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
         """Check a single host:port for models."""
         base = f"http://{host}:{port}/v1"
+        configured = (host, port) in self._auth_targets
+        headers = {}
+        if configured:
+            key = _gateway_api_key()
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
         try:
-            r = httpx.get(f"{base}/models", timeout=3)
+            # Only pass headers when there is actually a key, so the common
+            # unauthenticated probe keeps its original call signature.
+            kwargs = {"timeout": 3}
+            if headers:
+                kwargs["headers"] = headers
+            r = httpx.get(f"{base}/models", **kwargs)
             if not r.is_success:
+                if configured and r.status_code in (401, 403):
+                    logger.warning(
+                        "Model gateway %s:%s rejected discovery with HTTP %s. Set %s to a "
+                        "valid key, or model discovery will report no models there.",
+                        host, port, r.status_code, " or ".join(_GATEWAY_KEY_ENVS),
+                    )
                 return None
             data = r.json() or {}
             ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
