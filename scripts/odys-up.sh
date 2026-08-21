@@ -22,4 +22,25 @@ if [ -z "$LITELLM_API_KEY" ]; then
   echo "odys-up:   carries its own key in the app DB). Continuing." >&2
 fi
 
+# Preflight: OLLAMA_BASE_URL is injected from the vault below and therefore WINS
+# over the default in docker-compose.yml. Warn (don't override) when it still
+# points at raw Ollama, so a stale vault value can't silently bypass the gateway.
+# We warn rather than export our own: the vault is the source of truth for
+# deployment config, and a script that quietly overrides it produces exactly the
+# drift that makes these bugs expensive to find.
+_endpoint="$("$INF" secrets get OLLAMA_BASE_URL --projectId="$PID" \
+  --env=prod --path=/odysseus --domain="$DOMAIN" --plain 2>/dev/null)"
+case "$_endpoint" in
+  *:11434*)
+    echo "odys-up: WARNING - OLLAMA_BASE_URL at Infisical /odysseus is '$_endpoint'," >&2
+    echo "odys-up:   which bypasses the LiteLLM gateway and its per-model num_ctx cap." >&2
+    echo "odys-up:   An unbounded cold load can size its KV cache to the model's full" >&2
+    echo "odys-up:   context window and claim every GPU on the host. To fix:" >&2
+    echo "odys-up:     infisical secrets set OLLAMA_BASE_URL=\"http://litellm:4000/v1\" \\" >&2
+    echo "odys-up:       --projectId=$PID --env=prod --path=/odysseus --domain=$DOMAIN" >&2
+    echo "odys-up:   Continuing with the vault value." >&2
+    ;;
+esac
+unset _endpoint
+
 exec "$INF" run --projectId="$PID" --env=prod --path=/odysseus --domain="$DOMAIN" -- docker compose "$@"
