@@ -28,14 +28,22 @@ services:
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
     extra_hosts:
-      # Lets the container reach local services on the Docker host, including
-      # Ollama at http://host.docker.internal:11434.
+      # Lets the container reach local services on the Docker host. Model
+      # traffic should go via the LiteLLM gateway (http://litellm:4000/v1)
+      # rather than host Ollama on :11434, which enforces no VRAM bound.
       - "host.docker.internal:host-gateway"
     environment:
       - LLM_HOST=${LLM_HOST:-localhost}
       - LLM_HOSTS=${LLM_HOSTS:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      # Route model traffic through the LiteLLM gateway, not raw Ollama:
+      # the gateway pins num_ctx per model so a cold load cannot claim the
+      # full context window (and with it every GPU on the box).
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://litellm:4000/v1}
+      # Key for the gateway above. Model discovery sends it ONLY to the host
+      # named by OLLAMA_BASE_URL, never to scan-discovered hosts. Without it
+      # the gateway answers 401 and discovery reports no models (logged).
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
