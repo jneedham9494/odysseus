@@ -96,3 +96,69 @@ def test_scanned_host_rejection_is_not_logged(gateway_env, monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         d._check_port("192.168.1.50", 11434)
     assert "LITELLM_API_KEY" not in caplog.text
+
+
+# ── auth_headers_for: the path the warmup/keepalive loop must use ────────────
+#
+# The probe path (_check_port) authenticated correctly from commit 1982e52, but
+# the startup warmup and its 60s keepalive issued a bare httpx GET against the
+# same /v1/models URL. That sent no credential, LiteLLM logged it as
+# api_key='None', and it ran 1,442 times a day for two days.
+
+
+def test_headers_returned_for_the_configured_gateway(gateway_env):
+    md = ModelDiscovery(default_host="localhost")
+    assert md.auth_headers_for("http://litellm:4000/v1/models") == {
+        "Authorization": "Bearer sentinel-key"
+    }
+
+
+def test_headers_correct_before_get_hosts_has_run(gateway_env):
+    """Warmup can ask for headers before any discovery pass has populated
+    _auth_targets, so this must read the env rather than that instance state."""
+    md = ModelDiscovery(default_host="localhost")
+    assert md._auth_targets == set()          # _get_hosts() not yet called
+    assert md.auth_headers_for("http://litellm:4000/v1/models")
+
+
+def test_no_headers_for_a_scanned_host(gateway_env):
+    md = ModelDiscovery(default_host="localhost")
+    assert md.auth_headers_for("http://192.168.1.50:11434/v1/models") == {}
+
+
+def test_no_headers_when_key_is_absent(gateway_env, monkeypatch):
+    monkeypatch.delenv("LITELLM_API_KEY", raising=False)
+    md = ModelDiscovery(default_host="localhost")
+    assert md.auth_headers_for("http://litellm:4000/v1/models") == {}
+
+
+def test_malformed_url_does_not_raise(gateway_env):
+    md = ModelDiscovery(default_host="localhost")
+    for bad in ("", "not-a-url", "http://litellm/v1/models"):   # last has no port
+        assert md.auth_headers_for(bad) == {}
+
+
+def test_scoping_matches_the_probe_path(gateway_env):
+    """auth_headers_for and _check_port must agree on who gets the key.
+    They disagreed once already, which is the whole bug."""
+    md = ModelDiscovery(default_host="localhost")
+    md._get_hosts()
+    for host, port in md._auth_targets:
+        assert md.auth_headers_for(f"http://{host}:{port}/v1/models")
+
+
+# ── fingerprint caching: stop the /api/v1/models 404 every 60s ───────────────
+
+
+def test_fingerprint_is_probed_once_then_cached(gateway_env, monkeypatch):
+    calls = []
+
+    def counting_probe(host, port):
+        calls.append((host, port))
+        return None
+
+    md = ModelDiscovery(default_host="localhost")
+    monkeypatch.setattr(md, "_probe_provider", counting_probe)
+    for _ in range(5):
+        md._fingerprint_provider("litellm", 4000)
+    assert len(calls) == 1, f"probed {len(calls)}x; should be cached after the first"

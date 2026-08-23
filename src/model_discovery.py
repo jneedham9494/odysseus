@@ -16,6 +16,36 @@ logger = logging.getLogger(__name__)
 # would broadcast the credential to whatever happens to answer on the LAN.
 _GATEWAY_KEY_ENVS = ("LITELLM_API_KEY", "MODEL_GATEWAY_API_KEY")
 
+# Env vars that name a *configured* endpoint, as opposed to a host turned up by
+# the Tailscale/port scan. Only these may receive the gateway key.
+_ENDPOINT_ENVS = ("OLLAMA_BASE_URL", "OLLAMA_URL", "LM_STUDIO_URL")
+
+# How long a provider fingerprint is trusted. Without this the LM Studio probe
+# re-runs on every discovery pass, and against a gateway that has no such route
+# it is a 404 a minute, forever.
+_FINGERPRINT_TTL = 3600.0
+
+
+def _configured_auth_targets() -> set:
+    """(host, port) pairs from env config that may receive the gateway key.
+
+    Single source of truth for the scoping rule, so the probe path and the
+    warmup/keepalive path cannot drift apart - they did, and the result was a
+    rejected request a minute for two days.
+    """
+    targets = set()
+    for env_name in _ENDPOINT_ENVS:
+        raw = os.getenv(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            parsed = urlparse(raw if "://" in raw else "http://" + raw)
+        except Exception:
+            continue
+        if parsed.hostname and parsed.port:
+            targets.add((parsed.hostname, parsed.port))
+    return targets
+
 
 def _gateway_api_key() -> str:
     for name in _GATEWAY_KEY_ENVS:
@@ -115,7 +145,7 @@ class ModelDiscovery:
     def _get_hosts(self) -> List[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
         self._extra_ports = set()
-        self._auth_targets = set()
+        self._auth_targets = _configured_auth_targets()
 
         def _append_host(out: List[str], host: str) -> None:
             host = (host or "").strip()
@@ -125,7 +155,7 @@ class ModelDiscovery:
 
         def _append_env_hosts(out: List[str]) -> None:
             """Add hosts (and any custom ports) from provider-specific env vars."""
-            for env_name in ("OLLAMA_BASE_URL", "OLLAMA_URL", "LM_STUDIO_URL"):
+            for env_name in _ENDPOINT_ENVS:
                 raw = os.getenv(env_name, "").strip()
                 if not raw:
                     continue
@@ -134,8 +164,6 @@ class ModelDiscovery:
                     _append_host(out, parsed.hostname or "")
                     if parsed.port:
                         self._extra_ports.add(parsed.port)
-                    if parsed.hostname and parsed.port:
-                        self._auth_targets.add((parsed.hostname, parsed.port))
                 except Exception:
                     pass
 
@@ -167,8 +195,43 @@ class ModelDiscovery:
         _append_env_hosts(hosts)
         return hosts
 
+    def auth_headers_for(self, url: str) -> Dict[str, str]:
+        """Auth headers for a probe ``url``, or ``{}`` if it is not a gateway.
+
+        Same scoping rule as ``_check_port``: the key goes only to a host named
+        by the endpoint env vars, never to one found by the scan. Callers
+        outside discovery (startup warmup, keepalive) must route through this
+        rather than issuing a bare request, or they authenticate as nobody.
+
+        Reads the env directly rather than ``self._auth_targets`` so it is
+        correct before ``_get_hosts()`` has ever run.
+        """
+        try:
+            parsed = urlparse(url or "")
+        except Exception:
+            return {}
+        if not parsed.hostname or not parsed.port:
+            return {}
+        if (parsed.hostname, parsed.port) not in _configured_auth_targets():
+            return {}
+        key = _gateway_api_key()
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
+    def _fp_cache(self) -> Dict[Any, Any]:
+        return self.__dict__.setdefault("_fingerprint_cache", {})
+
     def _fingerprint_provider(self, host: str, port: int) -> Optional[str]:
         """Identify the server software via its native API, independent of port."""
+        cache = self._fp_cache()
+        hit = cache.get((host, port))
+        if hit is not None and (time.time() - hit[1]) < _FINGERPRINT_TTL:
+            return hit[0]
+        result = self._probe_provider(host, port)
+        cache[(host, port)] = (result, time.time())
+        return result
+
+    def _probe_provider(self, host: str, port: int) -> Optional[str]:
+        """Uncached native-API fingerprint. Only LM Studio answers this route."""
         try:
             r = httpx.get(f"http://{host}:{port}/api/v1/models", timeout=1.5)
             if r.is_success:

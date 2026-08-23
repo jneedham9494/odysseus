@@ -854,9 +854,25 @@ async def _startup_event():
             )
             for url in urls:
                 try:
+                    # A configured gateway rejects an anonymous probe. Ask
+                    # discovery for the headers rather than reaching for the
+                    # key here, so the scoping rule lives in one place.
+                    headers = model_discovery.auth_headers_for(url)
                     async with httpx.AsyncClient(timeout=5.0) as client:
-                        await client.get(url)
-                    logger.info(f"Warmup ping OK: {url}")
+                        r = await client.get(url, headers=headers or None)
+                    # A response is not a pass. Treating any status as success
+                    # reported a healthy gateway while every probe was being
+                    # rejected 401, which hid exactly that for two days.
+                    if r.is_success:
+                        logger.info(f"Warmup ping OK: {url}")
+                    else:
+                        logger.warning(
+                            "Warmup ping REJECTED: %s returned HTTP %s%s",
+                            url, r.status_code,
+                            " (no credential was sent - is this endpoint configured"
+                            " via OLLAMA_BASE_URL, and is LITELLM_API_KEY set?)"
+                            if not headers else "",
+                        )
                 except Exception as e:
                     logger.debug(f"Warmup ping failed for endpoint: {e}")
         except Exception as e:
