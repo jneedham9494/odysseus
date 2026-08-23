@@ -37,7 +37,13 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+# Pinned below 2.0 deliberately. The 2.x low-level Server dropped the
+# @server.list_tools() and @server.call_tool() decorators that every module in
+# mcp_servers/ is built on, so an unpinned install took out all five built-in
+# tool servers at once -- memory, RAG, image generation, SearXNG and email --
+# and did it silently: each subprocess died at import, the client only saw
+# "Connection closed", and the traceback never reached app.log.
+mcp>=1.29,<2
 pyotp
 qrcode[pil]
 croniter
