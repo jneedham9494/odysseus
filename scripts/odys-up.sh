@@ -43,4 +43,11 @@ case "$_endpoint" in
 esac
 unset _endpoint
 
+# Stamp the build with the commit it came from so the deployed artefact can be
+# compared against the repo instead of assumed to match it. Falls back to
+# "unknown" outside a checkout rather than failing: a missing stamp should make
+# the deploy check say "cannot prove", not block a deploy that is otherwise fine.
+GIT_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+export GIT_COMMIT
+
 exec "$INF" run --projectId="$PID" --env=prod --path=/odysseus --domain="$DOMAIN" -- docker compose "$@"

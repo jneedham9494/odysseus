@@ -44,6 +44,15 @@ RUN mkdir -p data logs services/cache/search
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Stamp the image with the commit it was built from. Declared here, below every
+# expensive layer, so a changing value only rebuilds this metadata layer and the
+# pip/apt caches survive. Without it `docker inspect` says nothing about which
+# source is running, so a deploy check can only compare a git ref to a git ref --
+# which is how this container sat two days stale on 2026-08-23 while every check
+# reported green. See H7.
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+
 EXPOSE 7000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
