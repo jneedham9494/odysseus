@@ -99,6 +99,7 @@ async def register_builtin_servers(mcp_manager):
 
     base_dir = get_app_root()
     python = sys.executable
+    _tasks: list = []
 
     async def _connect_python_server(server_id: str, script_path: str, name: str):
         try:
@@ -112,13 +113,19 @@ async def register_builtin_servers(mcp_manager):
             )
             if ok:
                 logger.info(f"Built-in MCP server registered: {name}")
-            else:
-                logger.warning(f"Built-in MCP server failed to connect: {name}")
+                return True
+            # ERROR, not WARNING. A built-in tool server that does not connect is a
+            # feature the user has silently lost -- web search, email and memory were
+            # all gone for two days in August 2026 and the only trace was one warning
+            # per server in a file nobody was reading. See H10.
+            logger.error(f"Built-in MCP server failed to connect: {name}")
+            return False
         except asyncio.CancelledError:
             logger.warning(f"Built-in MCP server {name} cancelled")
             raise
         except BaseException as e:
-            logger.warning(f"Built-in MCP server {name} error: {type(e).__name__}: {e}")
+            logger.error(f"Built-in MCP server {name} error: {type(e).__name__}: {e}")
+            return False
 
     for server_id, (script, name) in _BUILTIN_SERVERS.items():
         # Registry hygiene (MR-13): never auto-wire a built-in that is not on the
@@ -133,7 +140,32 @@ async def register_builtin_servers(mcp_manager):
         if not os.path.exists(script_path):
             logger.warning(f"Built-in MCP server script not found: {script_path}")
             continue
-        asyncio.create_task(_connect_python_server(server_id, script_path, name))
+        _tasks.append((name, asyncio.create_task(
+            _connect_python_server(server_id, script_path, name))))
+
+    async def _report_builtin_outcome():
+        """Say once, out loud, how many built-in servers actually came up.
+
+        Per-server lines are easy to lose in a busy startup log, and the failure
+        mode this exists for is five of them dying identically. A single line
+        stating connected-versus-configured is greppable, and it is an ERROR when
+        any are missing so that a degraded assistant is not indistinguishable from
+        a healthy one. See H10.
+        """
+        if not _tasks:
+            return
+        results = await asyncio.gather(*(t for _, t in _tasks), return_exceptions=True)
+        failed = [name for (name, _), r in zip(_tasks, results) if r is not True]
+        total = len(_tasks)
+        if failed:
+            logger.error(
+                "Built-in MCP servers: %d/%d connected; %d unavailable: %s",
+                total - len(failed), total, len(failed), ", ".join(failed),
+            )
+        else:
+            logger.info("Built-in MCP servers: %d/%d connected", total, total)
+
+    asyncio.create_task(_report_builtin_outcome())
 
     # Register NPX-based servers in the background (they take longer to start)
     npx_path = _find_npx()

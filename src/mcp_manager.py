@@ -7,6 +7,7 @@ Each server exposes tools that are made available to the agent loop.
 
 import json
 import logging
+import io
 import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -130,6 +131,35 @@ def mcp_tool_is_readonly(tool: Dict) -> bool:
     return name.startswith(_MCP_READONLY_VERBS)
 
 
+class _StderrToLog(io.TextIOBase):
+    """Funnel one stdio server's stderr into the application log.
+
+    Line-buffered because a traceback arrives in fragments and one log record per
+    fragment is unreadable. Logged at WARNING rather than DEBUG on purpose: a
+    healthy server is quiet on stderr, so anything here is worth a person seeing.
+    The trade is that a routine DeprecationWarning from a server will now surface
+    as a warning too, which is the right way round -- the failure this replaces
+    was silence.
+    """
+
+    def __init__(self, name: str):
+        self._name = name
+        self._buf = ""
+
+    def write(self, s: str) -> int:
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line.strip():
+                logger.warning("[%s stderr] %s", self._name, line.rstrip())
+        return len(s)
+
+    def flush(self) -> None:
+        if self._buf.strip():
+            logger.warning("[%s stderr] %s", self._name, self._buf.strip())
+        self._buf = ""
+
+
 class McpManager:
     """Manages MCP server connections and tool routing."""
 
@@ -215,7 +245,16 @@ class McpManager:
 
             stack = AsyncExitStack()
             try:
-                transport = await stack.enter_async_context(stdio_client(server_params))
+                # stdio_client defaults errlog to sys.stderr, so a server that dies
+                # during import writes its traceback to the container's stderr and
+                # nowhere else -- the client sees only "Connection closed", and
+                # app.log, the file anyone actually greps, records the symptom
+                # without the cause. That is how an AttributeError took out five
+                # built-in servers on 2026-08-21 and went unread for two days.
+                # See H10.
+                transport = await stack.enter_async_context(
+                    stdio_client(server_params, errlog=_StderrToLog(name))
+                )
                 read_stream, write_stream = transport
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
