@@ -1,0 +1,174 @@
+# Agent review of every pull request.
+#
+# This repository's own CLAUDE.md said the quiet part out loud: "the only review this code has
+# otherwise is the test suite written by whoever wrote the code." That is a weak position for
+# a repository whose changes are increasingly written by dispatched sessions -- the author and
+# the reviewer being the same process is not review.
+#
+# REQUIRES A CREDENTIAL THAT IS NOT SET YET, and it does not have to be an API key. The fleet
+# on odin authenticates with subscription OAuth (`claudeAiOauth`), not an API key, and
+# `claude setup-token` mints a long-lived token from that same subscription for use here. So
+# the cost of turning this on is one command and one repository secret, not a billing account.
+#
+# Until it is set, `preflight` emits a warning annotation on every pull request and succeeds.
+#
+# It used to fail. That was wrong for a reason worth recording: a check that is red on every
+# pull request teaches the reader to ignore red, and `check` -- the gate that actually matters
+# -- signals through the same colour. Burning that signal costs more than the problem it
+# solved. A warning annotation is unmissable on the PR and devalues nothing.
+#
+# The original concern still stands and is still met: nobody can believe this repository is
+# reviewed while every PR carries "no reviewer credential" in its checks.
+#
+# Note what this spends: a subscription token consumes the same rate limits the interactive
+# sessions use, so a burst of pull requests competes with the fleet doing the work.
+name: review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  # Separate, and first, so an absent credential is a red X with an explanation rather than a
+  # silently skipped job. A skipped job is indistinguishable from a passing one in the PR list.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      reviewer: ${{ steps.probe.outputs.reviewer }}
+    steps:
+      - id: probe
+        name: Say plainly whether a reviewer is configured
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          APP: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ] && [ -z "${APP:-}" ]; then
+            # A warning, not an error: see the note at the top of this file. This step must
+            # still SUCCEED, or every pull request is red and red stops meaning anything.
+            echo "::warning::NOT REVIEWED -- no reviewer credential. Cheapest path, no API billing: run" \
+                 "'claude setup-token' on a machine already signed in to the Claude" \
+                 "subscription this estate uses, and save the result as the repository secret" \
+                 "CLAUDE_CODE_OAUTH_TOKEN. ANTHROPIC_API_KEY also works and bills separately." \
+                 "Until then no agent has read this pull request."
+            echo "reviewer=absent" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "reviewer=present" >> "$GITHUB_OUTPUT"
+          echo "reviewer credential present"
+
+  review:
+    needs: preflight
+    # Skipped only when preflight positively established there is no credential, which it
+    # announced on the pull request. A skip here is therefore never silent.
+    if: needs.preflight.outputs.reviewer == 'present'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # the review reads the diff against the base, not just the tip
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          # The prompt tells Claude to post with `gh pr comment`, which needs both.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The workflow's own token, so the action does not exchange its OIDC token for a
+          # Claude Code App token. That exchange fails with
+          #
+          #   401 Unauthorized -- Claude Code is not installed on this repository
+          #
+          # and installing the App is gated behind a Claude Team or Enterprise plan, which
+          # this estate does not have. The model credential is separate and works: preflight
+          # found it and the job ran. Only the GitHub identity needed replacing.
+          #
+          # The cost is a less specific author on the comments -- github-actions[bot] rather
+          # than a Claude identity -- and the permissions block above already grants exactly
+          # what it needs: read the code, write comments, nothing else.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Read the diff, and post one comment. Nothing here can push, merge or approve --
+          # `gh pr comment` is the only write, and the permissions block above is the real
+          # boundary rather than this list.
+          claude_args: >-
+            --allowedTools "Read,Write,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(cat:*)"
+          prompt: |
+            Review this pull request against the repository's own standards. CLAUDE.md and
+            docs/glossary.md are in the checkout and are the authority -- read them first.
+
+            What this repository cares about, in order:
+
+            1. **A failure that renders identically to success.** This is the defect class the
+               project exists to detect and it keeps recurring in the project's own code: a
+               swallowed unmarshal error, a lint stage that skipped, a check whose exit status
+               reads the same whether the thing exists or not, a cap that only counted what
+               earlier runs left behind. Look for it specifically.
+            2. **Claims that state how they were established.** A comment or commit message
+               asserting a fact should say whether it was executed, read, or inferred, and a
+               count should carry its denominator. Flag confident assertions that rest on
+               nothing.
+            3. **Tests that would survive the bug.** For each behavioural change, ask what
+               single edit to the implementation would still pass the new tests. If you can
+               name one, say so -- that is the review comment worth writing here.
+            4. **Shell exit statuses.** Never pipe a command whose status matters; `| tail`
+               makes a failing test exit 0. Where `set -e` is suppressed (left of `&&`, in a
+               condition, inside `$( )`), say whether that was intended.
+
+            Be specific and quote the line. If the change is sound, say so briefly rather than
+            manufacturing findings -- a reviewer that always finds something gets muted, which
+            is the exact failure this repository documents in issue #10.
+
+            ## How to deliver the review
+
+            Post it as a single pull request comment, and nothing else. Write the body to a
+            file first and pass `--body-file`, never `--body` with a quoted string:
+
+                cat > /tmp/review.md <<'REVIEW'
+                <your review>
+                REVIEW
+                gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/review.md
+
+            The quoting matters: review prose contains apostrophes, and `--body '...'` ends the
+            string at the first one. `--body-file` leaves no quoting decision to make.
+
+            **A review nobody posts is a review nobody reads.** The first run of this workflow
+            completed ten turns, cost $0.27, and left its findings in the job log where no
+            human would ever look -- the prompt said "comment only" and never said how.
+
+            You have no permission to push, merge, or edit the branch. Comment, and stop.
+
+      # The review job going green means the agent process exited zero. It does NOT mean a
+      # review was delivered: if `gh pr comment` fails inside the agent -- a bad token scope, a
+      # quoting break, the agent running out of turns before it posts -- the job still succeeds
+      # and the PR shows a green check with no review on it.
+      #
+      # That is not hypothetical. The first working run completed ten turns, cost $0.27, posted
+      # nothing, and reported success. A run that reviewed and a run that silently discarded its
+      # review rendered identically, which is the defect class this repository exists to detect.
+      #
+      # Found by the reviewer, on this pull request, in its first real review.
+      - name: Fail unless a review was actually posted
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          STARTED: ${{ github.event.repository.pushed_at }}
+        run: |
+          set -euo pipefail
+          # Comments by the Actions identity on this PR. Any is enough: the reviewer posts one,
+          # and asking for "since this run began" would need a clock this step does not have.
+          n=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+                --jq '[.[] | select(.user.login == "github-actions[bot]")] | length')
+          if [ "$n" -eq 0 ]; then
+            echo "::error::The review job succeeded and posted no comment. The agent ran and its" \
+                 "findings were discarded -- treat this as a failed review, not a passed one."
+            exit 1
+          fi
+          echo "review comments present: $n"
