@@ -6,22 +6,17 @@ web_search branch emitted a bare query string and dropped time_filter. These pin
 that a valid filter is passed through as JSON, while plain/invalid cases stay a
 bare string (back-compat).
 """
-import sys
-from unittest.mock import MagicMock
+from tests.helpers.import_state import clear_fake_modules
 
-# Clean up any mocks from previous tests to ensure we load real modules.
-for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution']:
-    sys.modules.pop(mod, None)
-
-# Mock heavy database/model dependencies before importing (avoids the
-# src.tool_schemas <-> src.agent_tools circular import pulling in the DB layer).
-for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
-    'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database', 'core.models', 'core.database', 'core.auth'
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+# Evict a *stub* tool-stack module another test left behind, so the real ones
+# load. Only a stub: popping the real module builds a second copy on re-import
+# while everything that already imported it keeps the first, which is what made
+# the suite order-dependent (issue #41). The heavy sqlalchemy / core.database
+# dependencies this block used to MagicMock are handled by tests/conftest.py,
+# which pre-imports the real ones and stubs only what is not installed.
+clear_fake_modules(
+    'src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution'
+)
 
 import json  # noqa: E402
 

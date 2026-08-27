@@ -1,13 +1,17 @@
 import sys
 from unittest.mock import MagicMock
 
+from tests.helpers.import_state import clear_fake_modules
+
 # This module needs the real agent-tool stack; importing it pulls in heavy
 # DB/auth deps, so we stub those just long enough to import, then restore them.
-# We deliberately do NOT pop src.tool_execution: popping and re-importing it
-# rebinds the `src` package's `tool_execution` attribute, so a later
-# `import src.tool_execution as te` resolves to a different module object than
-# the one its functions live in - which silently breaks tests that monkeypatch
-# it (e.g. test_edit_file's admin gate).
+# The agent-stack modules are only evicted when a previous test left a *stub*
+# behind. Popping a real one and re-importing it rebinds the `src` package's
+# attribute, so a later `import src.agent_tools as at` resolves to a different
+# module object than the one whose functions everything else already holds -
+# which silently breaks tests that monkeypatch it, and made the outcome depend
+# on collection order (issue #41). src.tool_execution was already excluded here
+# for exactly that reason; the same applies to its three siblings.
 _ABSENT = object()
 _AGENT_MODULES = ["src.agent_tools", "src.tool_parsing", "src.tool_schemas"]
 _STUBBED = [
@@ -17,8 +21,7 @@ _STUBBED = [
 ]
 _saved_stubs = {name: sys.modules.get(name, _ABSENT) for name in _STUBBED}
 
-for _mod in _AGENT_MODULES:
-    sys.modules.pop(_mod, None)
+clear_fake_modules(*_AGENT_MODULES)
 for _mod in _STUBBED:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()

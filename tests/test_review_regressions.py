@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.preset_manager import PresetManager
+from tests.helpers.import_state import monkeypatch_import_state
 
 
 class _FakeColumn:
@@ -91,9 +92,18 @@ def _install_model_route_import_stubs(monkeypatch):
     session_mgr_mod = types.ModuleType("core.session_manager")
     session_mgr_mod.SessionManager = MagicMock()
 
-    monkeypatch.delitem(sys.modules, "routes.model_routes", raising=False)
-    monkeypatch.delitem(sys.modules, "routes.chat_routes", raising=False)
-    monkeypatch.delitem(sys.modules, "routes.session_routes", raising=False)
+    # Evict the route modules so they re-import against the stubs below, and
+    # restore BOTH halves of the import cache afterwards. sys.modules alone is
+    # not enough: the fresh import also rebinds `model_routes` on the `routes`
+    # package, and `import routes.model_routes as mr` resolves through that
+    # attribute - leaving a copy whose ModelEndpoint is _FakeModelEndpoint
+    # reachable by every later test (issue #41).
+    monkeypatch_import_state(
+        monkeypatch,
+        "routes.model_routes",
+        "routes.chat_routes",
+        "routes.session_routes",
+    )
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", db_mod)
     monkeypatch.setitem(sys.modules, "core.middleware", middleware_mod)
