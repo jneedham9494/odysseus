@@ -11,7 +11,15 @@
 # for setup details.
 services:
   odysseus:
-    build: .
+    build:
+      context: .
+      args:
+        # Defaults to "unknown" when unset, which the deploy check reads as
+        # "cannot prove" rather than "stale" -- see scripts/odys-up.sh.
+        # Nothing in a single-file stack deploy exports GIT_COMMIT the way
+        # odys-up.sh does, so set it in the stack's environment to get a real
+        # stamp; left unset the image is honestly labelled "unknown".
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
