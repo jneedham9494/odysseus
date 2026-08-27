@@ -191,6 +191,11 @@ against stubs, and cannot be a `with` block.
 
 - Drops each named module from `sys.modules` and restores it at teardown, along
   with its parent-package attribute.
+- Both halves matter because different import statements read different halves:
+  `import routes.x as y` prefers the parent attribute (falling back to
+  `sys.modules` only when it is missing), while `from routes.x import y` reads
+  `sys.modules`. A stub-bound copy left on the parent therefore shadows a
+  correct `sys.modules` entry, and the two import styles disagree.
 - Restores correctly even when the module was absent to begin with:
   `monkeypatch.delitem(..., raising=False)` records nothing for a missing key,
   which silently leaves the stub-bound copy cached for the rest of the session.
