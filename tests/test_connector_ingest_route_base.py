@@ -200,6 +200,25 @@ def test_failed_write_is_reported_as_503_not_partial_success(monkeypatch):
     # The owner gate and the framework guard both 503 too, so pin that this
     # one came from the write-path having actually run and reported failure.
     assert stub.owners == ["jack"]
+    # The write-path's own reason reaches the caller; the route does not
+    # swallow it behind a generic string.
+    assert r.json()["detail"] == "rag unavailable"
+
+
+def test_success_with_nothing_added_is_not_an_error(monkeypatch):
+    # ``added == 0`` is a legitimate success, not a failure: ingest_records
+    # returns it for a batch with no ingestable text, and for a re-ingest
+    # where every chunk deduped. The latter is what n8n's retries produce, so
+    # reading 0-added as an error would turn a safe retry into a 503 loop.
+    # ``success`` decides the status code -- ``added`` never does.
+    stub = _stub_write_path(monkeypatch, success=True, seen=1, added=0,
+                            message="no ingestable records")
+    client = _client(monkeypatch, owner="jack")
+    r = client.post("/api/connectors/ingest", json=_batch(), headers=_auth())
+    assert r.status_code == 200
+    assert stub.owners == ["jack"]
+    assert r.json()["ok"] is True
+    assert r.json()["added"] == 0
 
 
 def test_write_path_fails_closed_without_framework(monkeypatch):
