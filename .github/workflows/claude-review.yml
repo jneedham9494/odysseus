@@ -22,11 +22,44 @@
 #
 # Note what this spends: a subscription token consumes the same rate limits the interactive
 # sessions use, so a burst of pull requests competes with the fleet doing the work.
+#
+# `preflight` also reports WHICH project standards the reviewer could actually read. The prompt
+# below used to assert "CLAUDE.md and docs/glossary.md are in the checkout" unconditionally.
+# That is false in github-monitor, which has neither, and half false in homelab, which has no
+# docs/glossary.md -- and in both cases the reviewer discovered it, said so in prose, and the
+# `review` check went green exactly as it does for a repository that has both. "Reviewed against
+# the estate's standards" and "reviewed against nothing but the diff" are different claims and
+# the check reported them identically. That is this repository's own defect class, in the
+# mechanism built to detect it.
+#
+# The report is a warning annotation and a run-summary line, and the check still passes. A
+# repository with no CLAUDE.md is a gap in that repository, not a broken pull request, and the
+# note above about red losing its meaning applies with full force here too.
 name: review
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+
+# One review run per pull request, and a superseded one is cancelled rather than left running.
+#
+# Round 10 found the reason, and it is not tidiness. The gate counts a bot verdict submitted
+# after this run's own STARTED clock -- which is a *time* boundary, not a *run* boundary. Two
+# pushes close together start two overlapping runs, and if B posts its review before A reaches
+# its verification step, A counts B's review and goes green having posted nothing, about a diff
+# B never saw. A run whose own verdict was discarded rendering identically to one that delivered
+# is the defect this whole workflow exists to catch, so leaving it to a timestamp heuristic
+# would be the wrong shape of fix.
+#
+# Reviews carry no run id, so there is nothing to filter on; preventing the overlap removes the
+# race instead of detecting it. Rapid pushes are normal here -- this pull request took ten
+# rounds -- so the race was reachable rather than theoretical.
+#
+# cancel-in-progress, deliberately: a cancelled run's check is `cancelled`, not `success`, so a
+# superseded review cannot satisfy the gate either.
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -41,6 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       reviewer: ${{ steps.probe.outputs.reviewer }}
+      standards: ${{ steps.standards.outputs.standards }}
+      authority: ${{ steps.standards.outputs.authority }}
     steps:
       - id: probe
         name: Say plainly whether a reviewer is configured
@@ -63,6 +98,71 @@ jobs:
           echo "reviewer=present" >> "$GITHUB_OUTPUT"
           echo "reviewer credential present"
 
+      # preflight had no checkout: it read secrets and nothing else. The files it must now
+      # test for are not secrets, so it needs the tree. Shallow is enough -- this asks whether
+      # a path exists at the head of the pull request, not what it used to say.
+      #
+      # Both of these are gated on a credential existing, and the gate is the point. `exit 0`
+      # in the step above ends that STEP, not the job, so without this they ran even when no
+      # review was going to happen -- and in a repository with no CLAUDE.md they announced a
+      # weakness in a review that did not occur. A claim about what was established that did
+      # not match what was established: the defect this job exists to report, reappearing one
+      # layer down in the reporting. Found in review of PR #136.
+      - if: steps.probe.outputs.reviewer == 'present'
+        uses: actions/checkout@v5
+
+      - id: standards
+        if: steps.probe.outputs.reviewer == 'present'
+        name: Say plainly which project standards the reviewer can read
+        run: |
+          set -euo pipefail
+          # Three states, not two. A zero-byte CLAUDE.md is present to `-e` and worth nothing
+          # to a reviewer, and calling it present is the same mistake one level down.
+          have=""; empty=""; missing=""
+          for f in CLAUDE.md docs/glossary.md; do
+            if   [ ! -e "$f" ]; then missing="${missing:+$missing, }$f"
+            elif [ ! -s "$f" ]; then empty="${empty:+$empty, }$f"
+            else                     have="${have:+$have, }$f"
+            fi
+          done
+
+          # An explicit `if`, not `[ -n "$empty" ] && gap=...`. That form is exempt from
+          # `set -e` only because it is not the last line of the script; move it to the end
+          # in a later edit and the step exits 1 with no message and no output set.
+          gap="$missing"
+          if [ -n "$empty" ]; then
+            gap="${gap:+$gap, }$empty (present but empty)"
+          fi
+
+          if [ -z "$gap" ]; then
+            echo "standards=complete" >> "$GITHUB_OUTPUT"
+            echo "authority=CLAUDE.md and docs/glossary.md are in this checkout and are the authority -- read them first." >> "$GITHUB_OUTPUT"
+            echo "::notice::Reviewed against project standards: $have."
+            echo "Reviewer read: **$have**" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # A warning, never an error. A repository with no CLAUDE.md is a gap in that
+          # repository, and failing here would put a red X on every pull request in it --
+          # the exact trade this file already rejected for the missing-credential case.
+          # Present tense, and no claim that a review happened. This runs BEFORE the agent
+          # does, and the agent can still fail afterwards; "REVIEWED WITHOUT ..." asserted an
+          # outcome this step cannot know.
+          echo "::warning::PROJECT STANDARDS MISSING FROM THIS CHECKOUT -- not present: ${gap}." \
+               "The review that follows is told so and grounds those areas in the code itself." \
+               "It is a weaker review than one with those documents, and the gap belongs to the" \
+               "repository being reviewed, not to this workflow."
+
+          if [ -z "$have" ]; then
+            echo "standards=absent" >> "$GITHUB_OUTPUT"
+            echo "authority=This checkout contains NO project standards -- ${gap} are absent. Do not search for them or cite them. Ground the review in the code itself, and say so in one line at the top of your review." >> "$GITHUB_OUTPUT"
+            echo "Reviewer read: **nothing** — ${gap} absent" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "standards=partial" >> "$GITHUB_OUTPUT"
+            echo "authority=These are in this checkout and are the authority -- read them first: ${have}. These are NOT in this checkout: ${gap} -- do not search for them or cite them. Say so in one line at the top of your review." >> "$GITHUB_OUTPUT"
+            echo "Reviewer read: **$have** — missing: ${gap}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   review:
     needs: preflight
     # Skipped only when preflight positively established there is no credential, which it
@@ -74,9 +174,36 @@ jobs:
         with:
           fetch-depth: 0        # the review reads the diff against the base, not just the tip
 
+      # The prompt below interpolates `authority`. An empty value is not an error to YAML or
+      # to the action -- it renders as a blank line, the reviewer is told nothing about what
+      # it may read, and the run is green. That is the same failure one more layer down, and
+      # it is reachable the moment anyone edits preflight's gating (which is exactly what was
+      # wrong here). Positive evidence that preflight spoke, or stop.
+      - name: preflight must have said what the reviewer may read
+        env:
+          AUTHORITY: ${{ needs.preflight.outputs.authority }}
+          STANDARDS: ${{ needs.preflight.outputs.standards }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AUTHORITY:-}" ] || [ -z "${STANDARDS:-}" ]; then
+            echo "::error::preflight found a reviewer credential but produced no standards" \
+                 "verdict, so the prompt would carry no authority line and the reviewer would" \
+                 "be told nothing about what it may read. Refusing to review rather than" \
+                 "reviewing on an unstated footing."
+            exit 1
+          fi
+          echo "standards: ${STANDARDS}"
+      # A clock this run owns. The verification below counts only what appeared after this
+      # instant, so an earlier run's review cannot satisfy it.
+      - id: started
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - uses: anthropics/claude-code-action@v1
         env:
-          # The prompt tells Claude to post with `gh pr comment`, which needs both.
+          # The prompt tells Claude to post with `gh pr review --request-changes` or
+          # `--comment`, which needs both. It used to say `gh pr comment`; that was true
+          # until this same change removed the permission four lines below, and stale by
+          # the time it was read -- the pattern the block at 105 narrates catching once.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
@@ -95,14 +222,30 @@ jobs:
           # than a Claude identity -- and the permissions block above already grants exactly
           # what it needs: read the code, write comments, nothing else.
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Read the diff, and post one comment. Nothing here can push, merge or approve --
-          # `gh pr comment` is the only write, and the permissions block above is the real
-          # boundary rather than this list.
+          # Read the diff, and deliver one verdict.
+          #
+          # `gh pr review` is allowed only in the two flag-first forms below, so `--approve`
+          # does not match the allowlist at all. `gh pr comment` is gone with it: the prompt
+          # stopped asking for a comment when the verdict became a review, and leaving the
+          # permission behind meant the agent could still deliver via a channel that carries no
+          # verdict -- no CHANGES_REQUESTED, nothing blocked, and the verification step counting
+          # it as success. Same loophole as --approve, one line along, and the same fix. The prompt also forbids approving, and both
+          # are needed: the prompt is an instruction the agent could depart from, and the
+          # allowlist is a rule it cannot.
+          #
+          # This comment previously said "Nothing here can push, merge or approve", which was
+          # true when `gh pr comment` was the only write and became false the moment
+          # `gh pr review:*` was added -- a claim sitting unchanged next to the line that
+          # falsified it. Found by the reviewer, on the pull request that added it.
+          #
+          # Approving is not a cosmetic concern: a later review from the same identity replaces
+          # its earlier state, so an approval would clear the bot's own CHANGES_REQUESTED.
           claude_args: >-
-            --allowedTools "Read,Write,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(cat:*)"
+            --allowedTools "Read,Write,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review --request-changes:*),Bash(gh pr review --comment:*),Bash(cat:*)"
           prompt: |
-            Review this pull request against the repository's own standards. CLAUDE.md and
-            docs/glossary.md are in the checkout and are the authority -- read them first.
+            Review this pull request against the repository's own standards.
+
+            ${{ needs.preflight.outputs.authority }}
 
             What this repository cares about, in order:
 
@@ -128,13 +271,36 @@ jobs:
 
             ## How to deliver the review
 
-            Post it as a single pull request comment, and nothing else. Write the body to a
+            Submit it as a **formal pull request review**, not a comment. Write the body to a
             file first and pass `--body-file`, never `--body` with a quoted string:
 
                 cat > /tmp/review.md <<'REVIEW'
                 <your review>
                 REVIEW
-                gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/review.md
+
+            Then exactly one of these, and nothing else:
+
+                # you found something worth changing
+                gh pr review --request-changes --repo "$GITHUB_REPOSITORY" \
+                    "$PR_NUMBER" --body-file /tmp/review.md
+
+                # you genuinely found nothing
+                gh pr review --comment --repo "$GITHUB_REPOSITORY" \
+                    "$PR_NUMBER" --body-file /tmp/review.md
+
+            **The flag comes first, before every other argument.** The allowlist permits only
+            these two forms, so `gh pr review --approve` cannot run at all -- and a form with
+            the flag later would not match the allowlist either, and would simply be refused.
+
+            **Never `--approve`.** btw's decision, 2026-08-26: an approval from you would
+            satisfy the branch's review requirement, and your false-negative rate has never been
+            measured -- #52 exists to measure it and has not run. You can say a change looks
+            sound; you cannot clear it to merge.
+
+            `--request-changes` **blocks the merge** until btw dismisses it or the author pushes
+            a fix. That is the point, and it is the reason not to manufacture findings: a
+            reviewer that always requests changes has made its verdict carry no information, and
+            costs a dismissal every time it is wrong.
 
             The quoting matters: review prose contains apostrophes, and `--body '...'` ends the
             string at the first one. `--body-file` leaves no quoting decision to make.
@@ -146,29 +312,69 @@ jobs:
             You have no permission to push, merge, or edit the branch. Comment, and stop.
 
       # The review job going green means the agent process exited zero. It does NOT mean a
-      # review was delivered: if `gh pr comment` fails inside the agent -- a bad token scope, a
-      # quoting break, the agent running out of turns before it posts -- the job still succeeds
-      # and the PR shows a green check with no review on it.
+      # review was delivered: if the post fails inside the agent -- a bad token scope, a quoting
+      # break, the agent running out of turns before it posts -- the job still succeeds and the
+      # PR shows a green check with no review on it.
       #
       # That is not hypothetical. The first working run completed ten turns, cost $0.27, posted
-      # nothing, and reported success. A run that reviewed and a run that silently discarded its
-      # review rendered identically, which is the defect class this repository exists to detect.
+      # nothing, and reported success.
       #
-      # Found by the reviewer, on this pull request, in its first real review.
-      - name: Fail unless a review was actually posted
+      # Scoped to THIS run. It previously counted every bot comment on the pull request, so on a
+      # `synchronize` re-run an earlier run's review satisfied it -- and a run that silently
+      # discarded its review still went green. The same failure the step exists to catch, one
+      # layer up, on the trigger that fires most. A `STARTED` variable was declared for exactly
+      # this and never wired in, beside a comment asserting the clock did not exist.
+      #
+      # Found twice, independently, by retrospective reviews of #77 and #78.
+      - name: Fail unless THIS run posted a review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          STARTED: ${{ github.event.repository.pushed_at }}
+          STARTED: ${{ steps.started.outputs.at }}
         run: |
           set -euo pipefail
-          # Comments by the Actions identity on this PR. Any is enough: the reviewer posts one,
-          # and asking for "since this run began" would need a clock this step does not have.
-          n=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-                --jq '[.[] | select(.user.login == "github-actions[bot]")] | length')
-          if [ "$n" -eq 0 ]; then
-            echo "::error::The review job succeeded and posted no comment. The agent ran and its" \
-                 "findings were discarded -- treat this as a failed review, not a passed one."
+          # Refused here as well as in review_gate_count, because the two failures want
+          # different words. The library returning non-zero reads as "no verdict delivered",
+          # which is true but sends the reader to look at the agent; this says the clock itself
+          # is missing, which is a workflow edit. A template expression reading a missing step
+          # output renders as the empty string and Actions does not error, so nothing else
+          # would mention it (#150).
+          #
+          # That sentence originally showed the expression syntax literally. Do not: Actions
+          # templates the whole of `run:` before writing it to the shell, comments included, so
+          # an empty expression in a comment is an invalid expression in the workflow. It
+          # compiled to zero jobs, produced a push-event run with conclusion `failure` and no
+          # pull_request run at all, and the pull request sat blocked on a check that could
+          # never appear. A comment broke the workflow it was explaining.
+          if ! printf '%s' "$STARTED" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; then
+            echo "::error::the run's own clock is empty or malformed (STARTED=${STARTED:-<empty>})." \
+                 "The 'started' step did not publish 'at' -- check its id. Refusing to count," \
+                 "because an empty boundary matches every verdict ever posted and would turn this" \
+                 "gate back into the bug it exists to catch."
             exit 1
           fi
-          echo "review comments present: $n"
+          echo "counting verdicts delivered after $STARTED"
+          # Counted and reconciled by functions with fixture tests, not inline. The inline
+          # version regressed twice inside this pull request -- no time filter, then the other
+          # endpoint's field name -- and neither was caught by anything. `gh api` fetches the
+          # body and nothing else; the filtering that broke is in the library, under test.
+          # shellcheck source=scripts/lib/review-gate-count.sh
+          . scripts/lib/review-gate-count.sh
+          # --paginate --slurp, because an unpaginated call truncates in silence past a page
+          # boundary and this pull request reached eight reviews. The slurped shape is a list of
+          # pages; review_gate_count flattens it, where a fixture can pin that it does.
+          reviews_body=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews")
+          comments_body=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
+          # Unset on failure rather than empty-and-plausible: review_gate_verdict refuses a
+          # count it cannot read, so a broken lookup fails the gate instead of reading as none.
+          # No field argument here: the endpoint's time field belongs to the wrapper, where a
+          # fixture can pin it. See the note in review-gate-count.sh.
+          r=$(review_gate_count_reviews "$reviews_body" "$STARTED") || r=""
+          c=$(review_gate_count_comments "$comments_body" "$STARTED") || c=""
+          if ! verdict=$(review_gate_verdict "$r" "$c"); then
+            echo "::error::$verdict -- the agent ran and its findings were discarded. Treat" \
+                 "this as a failed review, not a passed one. An earlier run's review does not" \
+                 "count: it says nothing about this diff."
+            exit 1
+          fi
+          echo "$verdict"
