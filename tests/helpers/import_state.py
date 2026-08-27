@@ -8,6 +8,17 @@ had before the block — present, absent, or carrying a parent-package attribute
 Use ``clear_module`` to drop a single module from both ``sys.modules`` and its
 parent-package attribute (e.g. before forcing a fresh import inside the block).
 
+Use ``monkeypatch_import_state`` for the same guarantee in a setup helper that
+takes ``monkeypatch`` rather than wrapping a block: it evicts the named modules
+and restores both halves of the import cache at teardown.
+
+Use ``clear_fake_modules`` to evict named modules ONLY when they are stubs,
+leaving a real module cached. This is the safe replacement for a module-scope
+``sys.modules.pop(...)`` meant to "make sure the real one loads": popping a real
+module builds a second copy on the next import while everything that already
+imported it keeps the first, and which copy a ``monkeypatch.setattr`` reaches
+then depends on collection order.
+
 Use ``clear_fake_database_modules`` to evict a *stubbed* ``core.database`` (and
 its companion ``src.database``) that another test left in import state, without
 touching a real ``core.database`` loaded from disk.
@@ -67,6 +78,72 @@ def _restore_one(dotted_name, saved_mod, saved_attr):
 def clear_module(dotted_name):
     """Remove a module from sys.modules and its parent-package attribute."""
     _restore_one(dotted_name, _ABSENT, _ABSENT)
+
+
+
+
+def monkeypatch_import_state(monkeypatch, *dotted_names):
+    """Pin import state for the named modules to this test, via ``monkeypatch``.
+
+    The ``monkeypatch``-scoped twin of :func:`preserve_import_state`, for setup
+    helpers that are plain functions rather than context managers. Each module
+    is dropped from ``sys.modules`` so the caller's next import rebuilds it
+    against whatever stubs the caller installs, and BOTH halves of the import
+    cache are restored at teardown.
+
+    Restoring only ``sys.modules`` is not enough. Importing ``routes.x`` also
+    rebinds ``x`` on the ``routes`` package, and ``import routes.x as y``
+    resolves through that parent attribute — so a stub-bound copy left there
+    outlives the test that built it, and a later test that imports the module
+    that way silently gets the stub-bound one. Undo order matters too and is
+    handled by monkeypatch's LIFO: the ``sys.modules`` entry is restored first,
+    then the parent attribute.
+    """
+    for dotted_name in dotted_names:
+        parent_name, _, attr = dotted_name.rpartition(".")
+        parent = sys.modules.get(parent_name) if parent_name else None
+        if parent is not None:
+            monkeypatch.setattr(parent, attr, getattr(parent, attr, None), raising=False)
+        if dotted_name in sys.modules:
+            monkeypatch.delitem(sys.modules, dotted_name)
+        else:
+            # ``delitem(..., raising=False)`` records NOTHING for a key that is
+            # already absent, so the copy the caller is about to import would
+            # stay cached for the rest of the session. Record "was absent"
+            # explicitly instead: monkeypatch's undo deletes a key it recorded
+            # as previously unset, whatever value is sitting there by then.
+            monkeypatch.setitem(sys.modules, dotted_name, None)
+            del sys.modules[dotted_name]
+
+
+def clear_fake_modules(*dotted_names):
+    """Evict only *stubbed* entries for the named modules from import state.
+
+    Test-only, and the guarded counterpart to :func:`clear_module`. A module
+    loaded from disk carries a string ``__file__``; a stub (a ``MagicMock`` or a
+    bare ``types.ModuleType``) does not. Only the latter is dropped, from both
+    ``sys.modules`` and its parent-package attribute.
+
+    Use this where a module-scope block used to ``sys.modules.pop`` a real
+    module unconditionally "to be sure the real one loads". Popping a real
+    module does not reload it for anyone else: the next import builds a SECOND
+    module object, and every module that already imported the first keeps
+    pointing at it. ``monkeypatch.setattr("pkg.mod.name", ...)`` then patches
+    the copy in ``sys.modules`` while the code under test reads the other one,
+    so whether a test passes depends on which files were collected first.
+    """
+    for dotted_name in dotted_names:
+        parent_name, _, attr = dotted_name.rpartition(".")
+        parent = sys.modules.get(parent_name) if parent_name else None
+        cached = sys.modules.get(dotted_name)
+        mod = cached if cached is not None else (
+            getattr(parent, attr, None) if parent is not None else None
+        )
+        if mod is None or isinstance(getattr(mod, "__file__", None), str):
+            continue
+        sys.modules.pop(dotted_name, None)
+        if parent is not None and getattr(parent, attr, None) is mod:
+            delattr(parent, attr)
 
 
 def clear_fake_database_modules():
