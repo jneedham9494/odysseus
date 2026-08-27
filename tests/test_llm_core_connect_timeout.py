@@ -8,6 +8,7 @@ on resend. The connect budget is now LLMConfig.CONNECT_TIMEOUT (env
 LLM_CONNECT_TIMEOUT), applied via _call_timeout/_stream_timeout helpers.
 """
 import importlib
+import importlib.util
 import httpx
 import pytest
 
@@ -48,10 +49,25 @@ def test_helpers_are_config_driven(monkeypatch):
 
 
 def test_env_override_is_honoured(monkeypatch):
+    """LLM_CONNECT_TIMEOUT is read at import time, so re-execute the module.
+
+    Into a THROWAWAY module object, not over the live one. `importlib.reload`
+    re-runs the file into the real module's __dict__, which rebinds every
+    module-level singleton - including caches such as `_kimi_code_ua_cache`.
+    Tests that imported one of those names before the reload keep the old
+    object while the functions read the new one, so what they assert depends on
+    which file pytest collected first (issue #41 - test_kimi_code_user_agent).
+    A private copy under its own name has no such reach: nothing else can see
+    it, and sys.modules is untouched.
+    """
     monkeypatch.setenv("LLM_CONNECT_TIMEOUT", "6.5")
-    reloaded = importlib.reload(llm_core)
-    try:
-        assert reloaded.LLMConfig.CONNECT_TIMEOUT == 6.5
-    finally:
-        monkeypatch.delenv("LLM_CONNECT_TIMEOUT", raising=False)
-        importlib.reload(llm_core)  # restore module-level default for other tests
+
+    spec = importlib.util.spec_from_file_location(
+        "_llm_core_env_override_probe", llm_core.__file__
+    )
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+
+    assert probe.LLMConfig.CONNECT_TIMEOUT == 6.5
+    # The live module keeps the default it was imported with.
+    assert llm_core.LLMConfig.CONNECT_TIMEOUT == 10.0

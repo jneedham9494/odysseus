@@ -9,18 +9,18 @@ That is an intended tool call in non-native/textual tool mode, but older parsing
 only recognized fenced blocks, [TOOL_CALL], XML invoke, and tool_code markup.
 """
 import json
-import sys
-from unittest.mock import MagicMock
 
-for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution']:
-    sys.modules.pop(mod, None)
-for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
-    'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database', 'core.models', 'core.database', 'core.auth'
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
+from tests.helpers.import_state import clear_fake_modules
+
+# Evict a *stub* tool-stack module another test left behind, so the real ones
+# load. Only a stub: popping the real module builds a second copy on re-import
+# while everything that already imported it keeps the first, which is what made
+# the suite order-dependent (issue #41). The heavy sqlalchemy / core.database
+# dependencies this block used to MagicMock are handled by tests/conftest.py,
+# which pre-imports the real ones and stubs only what is not installed.
+clear_fake_modules(
+    'src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution'
+)
 
 import src.agent_tools  # noqa: E402, F401
 from src.tool_parsing import parse_tool_blocks, strip_tool_blocks  # noqa: E402
