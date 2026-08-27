@@ -18,23 +18,13 @@ password in Infisical `/odysseus → ODYSSEUS_ADMIN_PASSWORD` (don't print it).
   rebuild**: `docker compose build odysseus && … up -d`. `tests/` and `eval/` aren't baked →
   run via a repo-mount (`docker run --rm -v $PWD:/work -w /work --entrypoint python … -m pytest`).
 - **Deploy:** `bash scripts/odys-up.sh up -d` (injects Infisical `--path=/odysseus`).
-- **Models:** everything goes through the **LiteLLM gateway** (`http://litellm:4000/v1`),
-  never raw Ollama on `:11434`. The gateway pins `num_ctx` per model; without that bound a
-  17GB model loaded into 53GB of VRAM and drove the UPS to 915W then 1001W on 2026-08-21
-  (per `docs/MODEL_GATEWAY.md`, which records both). Two mechanisms, and confusing them is
-  the trap:
-  - **Chat resolves through the `model_endpoints` table** (`src/endpoint_resolver.py`), whose
-    only enabled row is **"LiteLLM (traced)"** → `http://litellm:4000/v1`. *This* is the
-    inference path, and the tracing is a side effect of it rather than its purpose.
-  - `OLLAMA_BASE_URL` governs **model discovery only** (`src/model_discovery.py`) plus an
-    informational `/api/runtime` field — it does not route chat. The deployed value comes from
-    Infisical `/odysseus` and **overrides** the compose default, so `docker-compose.yml` is a
-    backstop for a fresh checkout rather than a statement of what is running.
-    `scripts/odys-up.sh` warns at deploy time if the vault value still points at `:11434`.
-  Picking a `qwen3-agent` model routes through the toggle-able vLLM (see homelab CLAUDE.md).
-  **Read [`docs/MODEL_GATEWAY.md`](docs/MODEL_GATEWAY.md) before changing any of this** — the
-  addresses are recorded there with what each one actually did when tried from inside the
-  container.
+- **Models:** everything routes through the **LiteLLM gateway** (`http://litellm:4000/v1`),
+  never raw Ollama on `:11434` — the gateway pins `num_ctx`, and unbounded context is what put
+  a 17GB model into 53GB of VRAM and the UPS at 1001W. Two mechanisms, easily confused:
+  **chat** resolves through the `model_endpoints` table (`src/endpoint_resolver.py`, enabled
+  row `LiteLLM (traced)`), while `OLLAMA_BASE_URL` feeds **discovery only** and comes from
+  Infisical, overriding the compose default. `qwen3-agent` routes via the toggle-able vLLM
+  (homelab CLAUDE.md). Verified addresses and why: [`docs/MODEL_GATEWAY.md`](docs/MODEL_GATEWAY.md).
 
 ## What's hardened (foundation W2/W3 — don't regress)
 - `src/sandbox_env.py` — bash/python tools get a **secret-free** subprocess env (was leaking all 9 app secrets via `os.environ`).
