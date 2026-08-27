@@ -49,11 +49,21 @@ for mod_name in [
     if mod_name not in sys.modules and not _has_module(mod_name):
         sys.modules[mod_name] = MagicMock()
 
+# src.database is a thin re-export of core.database, so prefer the real module
+# and fall back to a stub only when core.database itself is unavailable. A stub
+# installed while the real module is importable is worse than no stub: the
+# guarded "evict a fake" cleanups in several test files (they check for a
+# missing __file__) then drop it mid-collection, the next import builds the real
+# one, and every module that already bound the stub keeps pointing at it. Which
+# copy a test patches then depends on collection order (issue #41).
 if "src.database" not in sys.modules:
-    _db = types.ModuleType("src.database")
-    _db.SessionLocal = MagicMock()
-    _db.ModelEndpoint = MagicMock()
-    sys.modules["src.database"] = _db
+    try:
+        import src.database  # noqa: F401
+    except ImportError:
+        _db = types.ModuleType("src.database")
+        _db.SessionLocal = MagicMock()
+        _db.ModelEndpoint = MagicMock()
+        sys.modules["src.database"] = _db
 
 # Pre-import core.models before test_agent_loop.py's module-level stubs
 # run (it replaces sys.modules['core.models'] with a MagicMock during

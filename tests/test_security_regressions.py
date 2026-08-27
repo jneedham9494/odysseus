@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.import_state import clear_module, preserve_import_state
+
 
 # ── prompt-injection context wrapper ────────────────────────────
 
@@ -386,37 +388,43 @@ def test_build_user_content_skips_cross_owner_attachments(tmp_path):
 def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monkeypatch):
     import asyncio
     from types import SimpleNamespace
-    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
-        sys.modules.pop(mod_name, None)
-    _stub_core_database_for_route_imports(monkeypatch)
-    from src.chat_handler import ChatHandler
-    from src.upload_handler import UploadHandler
-    from src import settings
 
-    upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
-    handler = UploadHandler(str(tmp_path), str(upload_dir))
-    monkeypatch.setattr("src.chat_handler.UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setattr(
-        settings,
-        "get_setting",
-        lambda key, default=None: False if key == "vision_enabled" else default,
-    )
+    # The fresh import below must be undone, not just repeated: leaving these
+    # two modules absent means the next importer builds a SECOND copy, while
+    # every test module that already imported them keeps the first. A
+    # `monkeypatch.setattr("routes.chat_helpers.x", ...)` in a later test then
+    # patches whichever copy sys.modules happens to hold, so the outcome
+    # depends on collection order (issue #41 - test_chat_helpers).
+    with preserve_import_state("src.chat_handler", "routes.chat_helpers"):
+        clear_module("src.chat_handler")
+        clear_module("routes.chat_helpers")
+        _stub_core_database_for_route_imports(monkeypatch)
+        from src.chat_handler import ChatHandler
+        from src.upload_handler import UploadHandler
+        from src import settings
 
-    chat_handler = ChatHandler(None, None, None, None, None, handler)
-    sess = SimpleNamespace(id="s1", owner="alice", model="text-model")
-
-    _enhanced, user_content, _text_ctx, _yt, attachment_meta = asyncio.run(
-        chat_handler.preprocess_message(
-            "hello",
-            [bob_id],
-            sess,
+        upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
+        handler = UploadHandler(str(tmp_path), str(upload_dir))
+        monkeypatch.setattr("src.chat_handler.UPLOAD_DIR", str(upload_dir))
+        monkeypatch.setattr(
+            settings,
+            "get_setting",
+            lambda key, default=None: False if key == "vision_enabled" else default,
         )
-    )
 
-    assert attachment_meta == []
-    assert user_content == "hello"
-    for mod_name in ("src.chat_handler", "routes.chat_helpers"):
-        sys.modules.pop(mod_name, None)
+        chat_handler = ChatHandler(None, None, None, None, None, handler)
+        sess = SimpleNamespace(id="s1", owner="alice", model="text-model")
+
+        _enhanced, user_content, _text_ctx, _yt, attachment_meta = asyncio.run(
+            chat_handler.preprocess_message(
+                "hello",
+                [bob_id],
+                sess,
+            )
+        )
+
+        assert attachment_meta == []
+        assert user_content == "hello"
 
 
 def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
