@@ -22,7 +22,7 @@ password in Infisical `/odysseus → ODYSSEUS_ADMIN_PASSWORD` (don't print it).
   never raw Ollama on `:11434` — the gateway pins `num_ctx`, and unbounded context is what put
   a 17GB model into 53GB of VRAM and the UPS at 1001W. Two mechanisms, easily confused:
   **chat** resolves through the `model_endpoints` table (`src/endpoint_resolver.py`, enabled
-  row `LiteLLM (traced)`), while `OLLAMA_BASE_URL` feeds **discovery only** and comes from
+  row `LiteLLM (traced)`), while `OLLAMA_BASE_URL` feeds **discovery, not chat**, and comes from
   Infisical, overriding the compose default. `qwen3-agent` routes via the toggle-able vLLM
   (homelab CLAUDE.md). Verified addresses and why: [`docs/MODEL_GATEWAY.md`](docs/MODEL_GATEWAY.md).
 
