@@ -9,6 +9,8 @@ LLM_CONNECT_TIMEOUT), applied via _call_timeout/_stream_timeout helpers.
 """
 import importlib
 import importlib.util
+import sys
+import threading
 import httpx
 import pytest
 
@@ -69,5 +71,30 @@ def test_env_override_is_honoured(monkeypatch):
     spec.loader.exec_module(probe)
 
     assert probe.LLMConfig.CONNECT_TIMEOUT == 6.5
-    # The live module keeps the default it was imported with.
+    # The live module keeps the default it was imported with, and the probe is
+    # not reachable by name - the two properties the throwaway copy is for.
     assert llm_core.LLMConfig.CONNECT_TIMEOUT == 10.0
+    assert "_llm_core_env_override_probe" not in sys.modules
+    assert llm_core._kimi_code_ua_cache is not probe._kimi_code_ua_cache
+
+
+def test_module_is_safe_to_execute_a_second_time():
+    """Guard for the probe above: re-running the file must stay inert.
+
+    Executing src/llm_core.py under a second name is only safe while its
+    module-level code is pure - constants, regexes, empty caches, a lock, an
+    httpx.Limits config object. Nothing may open a connection, spawn a thread,
+    touch the filesystem or register an atexit hook at import time. Pin the two
+    that would actually bite: the shared async client stays unbuilt, and no
+    background thread is started.
+    """
+    before = threading.active_count()
+
+    spec = importlib.util.spec_from_file_location(
+        "_llm_core_side_effect_probe", llm_core.__file__
+    )
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+
+    assert probe._http_client is None
+    assert threading.active_count() == before
