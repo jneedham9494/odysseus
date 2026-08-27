@@ -95,13 +95,20 @@ def monkeypatch_import_state(monkeypatch, *dotted_names):
     rebinds ``x`` on the ``routes`` package, and the two halves are read by
     different import statements:
 
-    * ``import routes.x as y`` resolves through the PARENT ATTRIBUTE
+    * ``import routes.x as y`` PREFERS THE PARENT ATTRIBUTE, falling back to
+      ``sys.modules`` only when the attribute is missing (it compiles to
+      ``IMPORT_NAME`` + ``IMPORT_FROM``, and ``IMPORT_FROM`` is a ``getattr``
+      with that fallback — not the ``c = a.b`` attribute lookup it is usually
+      described as)
     * ``from routes.x import y`` resolves through ``sys.modules``
 
     So the two can disagree, and which copy a test gets then depends on how it
-    spells its import. A stub-bound copy left on the parent outlives the test
-    that built it, and a later ``import routes.x as y`` silently picks it up
-    while ``from``-style importers of the same module still see the real one.
+    spells its import. The dangerous direction is a stub-bound copy left on the
+    parent: because the attribute is preferred, it SHADOWS a perfectly correct
+    ``sys.modules`` entry, so a later ``import routes.x as y`` silently picks
+    it up while ``from``-style importers of the same module still see the real
+    one. The reverse — attribute missing, ``sys.modules`` right — is benign,
+    because the fallback finds the real module.
     Undo order matters too and is handled by monkeypatch's LIFO: the
     ``sys.modules`` entry is restored first, then the parent attribute.
 
