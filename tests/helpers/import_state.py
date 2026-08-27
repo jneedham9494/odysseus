@@ -92,12 +92,24 @@ def monkeypatch_import_state(monkeypatch, *dotted_names):
     cache are restored at teardown.
 
     Restoring only ``sys.modules`` is not enough. Importing ``routes.x`` also
-    rebinds ``x`` on the ``routes`` package, and ``import routes.x as y``
-    resolves through that parent attribute — so a stub-bound copy left there
-    outlives the test that built it, and a later test that imports the module
-    that way silently gets the stub-bound one. Undo order matters too and is
-    handled by monkeypatch's LIFO: the ``sys.modules`` entry is restored first,
-    then the parent attribute.
+    rebinds ``x`` on the ``routes`` package, and the two halves are read by
+    different import statements:
+
+    * ``import routes.x as y`` resolves through the PARENT ATTRIBUTE
+    * ``from routes.x import y`` resolves through ``sys.modules``
+
+    So the two can disagree, and which copy a test gets then depends on how it
+    spells its import. A stub-bound copy left on the parent outlives the test
+    that built it, and a later ``import routes.x as y`` silently picks it up
+    while ``from``-style importers of the same module still see the real one.
+    Undo order matters too and is handled by monkeypatch's LIFO: the
+    ``sys.modules`` entry is restored first, then the parent attribute.
+
+    (Note the corollary: assigning a stub straight into ``sys.modules`` never
+    rebinds the parent attribute, so it is visible to ``from``-style imports
+    only. That is why a fixture that swaps modules by dict assignment cannot
+    strand a copy on the parent — and also why its stub does not reach an
+    ``import x.y as z`` in the code under test.)
     """
     for dotted_name in dotted_names:
         parent_name, _, attr = dotted_name.rpartition(".")
