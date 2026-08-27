@@ -192,11 +192,14 @@ def test_invalid_workflow_slug_is_rejected(monkeypatch):
 def test_failed_write_is_reported_as_503_not_partial_success(monkeypatch):
     # RAG down / owner missing → the route surfaces a service error so n8n
     # retries, rather than reporting a write that did not happen.
-    _stub_write_path(monkeypatch, success=False, message="rag unavailable",
-                     seen=1, added=0)
+    stub = _stub_write_path(monkeypatch, success=False,
+                            message="rag unavailable", seen=1, added=0)
     client = _client(monkeypatch, owner="jack")
     r = client.post("/api/connectors/ingest", json=_batch(), headers=_auth())
     assert r.status_code == 503
+    # The owner gate and the framework guard both 503 too, so pin that this
+    # one came from the write-path having actually run and reported failure.
+    assert stub.owners == ["jack"]
 
 
 def test_write_path_fails_closed_without_framework(monkeypatch):
