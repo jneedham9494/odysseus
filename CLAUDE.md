@@ -18,9 +18,13 @@ password in Infisical `/odysseus → ODYSSEUS_ADMIN_PASSWORD` (don't print it).
   rebuild**: `docker compose build odysseus && … up -d`. `tests/` and `eval/` aren't baked →
   run via a repo-mount (`docker run --rm -v $PWD:/work -w /work --entrypoint python … -m pytest`).
 - **Deploy:** `bash scripts/odys-up.sh up -d` (injects Infisical `--path=/odysseus`).
-- **Models:** Ollama **direct** (`OLLAMA_BASE_URL=http://host.docker.internal:11434/v1`) +
-  a DB `ModelEndpoint` **"LiteLLM (traced)"** (`http://litellm:4000/v1`) for Langfuse tracing.
-  Picking a `qwen3-agent` model there routes through the toggle-able vLLM (see homelab CLAUDE.md).
+- **Models:** everything routes through the **LiteLLM gateway** (`http://litellm:4000/v1`),
+  never raw Ollama on `:11434` — the gateway pins `num_ctx`, and unbounded context is what put
+  a 17GB model into 53GB of VRAM and the UPS at 1001W. Two mechanisms, easily confused:
+  **chat** resolves through the `model_endpoints` table (`src/endpoint_resolver.py`, enabled
+  row `LiteLLM (traced)`), while `OLLAMA_BASE_URL` feeds **discovery, not chat**, and comes from
+  Infisical, overriding the compose default. `qwen3-agent` routes via the toggle-able vLLM
+  (homelab CLAUDE.md). Verified addresses and why: [`docs/MODEL_GATEWAY.md`](docs/MODEL_GATEWAY.md).
 
 ## What's hardened (foundation W2/W3 — don't regress)
 - `src/sandbox_env.py` — bash/python tools get a **secret-free** subprocess env (was leaking all 9 app secrets via `os.environ`).
