@@ -7,7 +7,9 @@ import pytest
 from tests.helpers.import_state import (
     clear_fake_database_modules,
     clear_fake_endpoint_resolver_modules,
+    clear_fake_modules,
     clear_module,
+    monkeypatch_import_state,
     preserve_import_state,
 )
 
@@ -424,3 +426,130 @@ def test_clear_fake_resolver_uses_parent_attr_when_not_in_sys_modules():
 
         assert not hasattr(fake_src, "endpoint_resolver")
         assert "routes.model_routes" not in sys.modules
+
+
+# ── clear_fake_modules ────────────────────────────────────────────────
+
+
+def test_clear_fake_modules_evicts_a_stub():
+    with preserve_import_state("_fake_istate_parent", "_fake_istate_parent.child"):
+        parent = types.ModuleType("_fake_istate_parent")
+        stub = types.ModuleType("_fake_istate_parent.child")  # no __file__
+        parent.child = stub
+        sys.modules["_fake_istate_parent"] = parent
+        sys.modules["_fake_istate_parent.child"] = stub
+
+        clear_fake_modules("_fake_istate_parent.child")
+
+        assert "_fake_istate_parent.child" not in sys.modules
+        assert not hasattr(parent, "child")
+
+
+def test_clear_fake_modules_keeps_a_real_module():
+    """The whole point: a real module stays cached, so nothing ends up holding a
+    second copy of it."""
+    with preserve_import_state("_fake_istate_parent", "_fake_istate_parent.child"):
+        parent = types.ModuleType("_fake_istate_parent")
+        real = types.ModuleType("_fake_istate_parent.child")
+        real.__file__ = "/somewhere/child.py"
+        parent.child = real
+        sys.modules["_fake_istate_parent"] = parent
+        sys.modules["_fake_istate_parent.child"] = real
+
+        clear_fake_modules("_fake_istate_parent.child")
+
+        assert sys.modules["_fake_istate_parent.child"] is real
+        assert parent.child is real
+
+
+def test_clear_fake_modules_ignores_uncached_names():
+    assert _SENTINEL not in sys.modules
+    clear_fake_modules(_SENTINEL)  # must not raise
+    assert _SENTINEL not in sys.modules
+
+
+def test_clear_fake_modules_keeps_parent_attr_pointing_elsewhere():
+    with preserve_import_state("_fake_istate_parent", "_fake_istate_parent.child"):
+        parent = types.ModuleType("_fake_istate_parent")
+        cached_stub = types.ModuleType("_fake_istate_parent.child")
+        other = types.ModuleType("_fake_istate_parent.child")
+        parent.child = other
+        sys.modules["_fake_istate_parent"] = parent
+        sys.modules["_fake_istate_parent.child"] = cached_stub
+
+        clear_fake_modules("_fake_istate_parent.child")
+
+        assert "_fake_istate_parent.child" not in sys.modules
+        assert parent.child is other
+
+
+# ── monkeypatch_import_state ──────────────────────────────────────────
+
+
+def test_monkeypatch_import_state_restores_a_cached_module():
+    with preserve_import_state("_fake_istate_parent", "_fake_istate_parent.child"):
+        parent = types.ModuleType("_fake_istate_parent")
+        original = types.ModuleType("_fake_istate_parent.child")
+        parent.child = original
+        sys.modules["_fake_istate_parent"] = parent
+        sys.modules["_fake_istate_parent.child"] = original
+
+        mp = pytest.MonkeyPatch()
+        monkeypatch_import_state(mp, "_fake_istate_parent.child")
+        assert "_fake_istate_parent.child" not in sys.modules
+
+        # stand in for the caller's fresh import against its stubs
+        replacement = types.ModuleType("_fake_istate_parent.child")
+        sys.modules["_fake_istate_parent.child"] = replacement
+        parent.child = replacement
+
+        mp.undo()
+
+        assert sys.modules["_fake_istate_parent.child"] is original
+        assert parent.child is original
+
+
+def test_monkeypatch_import_state_removes_a_module_that_was_absent():
+    """The case a bare ``delitem(..., raising=False)`` gets wrong: with nothing
+    cached to record, the caller's fresh import would stay cached for the rest
+    of the session — reachable both by name and through the parent package."""
+    with preserve_import_state("_fake_istate_parent", "_fake_istate_parent.child"):
+        parent = types.ModuleType("_fake_istate_parent")
+        sys.modules["_fake_istate_parent"] = parent
+        sys.modules.pop("_fake_istate_parent.child", None)
+
+        mp = pytest.MonkeyPatch()
+        monkeypatch_import_state(mp, "_fake_istate_parent.child")
+
+        replacement = types.ModuleType("_fake_istate_parent.child")
+        sys.modules["_fake_istate_parent.child"] = replacement
+        parent.child = replacement
+
+        mp.undo()
+
+        assert "_fake_istate_parent.child" not in sys.modules
+        assert not hasattr(parent, "child")
+
+
+def test_monkeypatch_import_state_restores_parent_attr_left_behind():
+    """sys.modules and the parent attribute can disagree: a bare
+    ``sys.modules.pop`` elsewhere drops the entry but leaves the attribute. The
+    pre-test attribute must still come back."""
+    with preserve_import_state("_fake_istate_parent", "_fake_istate_parent.child"):
+        parent = types.ModuleType("_fake_istate_parent")
+        stranded = types.ModuleType("_fake_istate_parent.child")
+        parent.child = stranded
+        sys.modules["_fake_istate_parent"] = parent
+        sys.modules.pop("_fake_istate_parent.child", None)
+
+        mp = pytest.MonkeyPatch()
+        monkeypatch_import_state(mp, "_fake_istate_parent.child")
+
+        replacement = types.ModuleType("_fake_istate_parent.child")
+        sys.modules["_fake_istate_parent.child"] = replacement
+        parent.child = replacement
+
+        mp.undo()
+
+        assert "_fake_istate_parent.child" not in sys.modules
+        assert parent.child is stranded
